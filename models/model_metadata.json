@@ -1,0 +1,4 @@
+{
+  "status": "not_trained",
+  "reason": "No labeled research dataset has been supplied. Train locally before deploying a production model."
+}
