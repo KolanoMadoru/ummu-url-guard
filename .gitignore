@@ -10,3 +10,4 @@ __pycache__/
 *.joblib
 playwright-report/
 test-results/
+.vercel_python_packages/

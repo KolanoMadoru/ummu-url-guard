@@ -16,7 +16,7 @@ Phishing URL Detection & Typosquatting Analysis — a Vite/vanilla JavaScript re
 
 ## Local development
 
-Prerequisites: Python 3.12 and Node.js 22+ (CI uses Node 24).
+Prerequisites: Python 3.12 and Node.js 24.x (matching Vercel and CI).
 
 ```sh
 npm ci
@@ -111,6 +111,14 @@ Validated in this cloud instance: lexical extraction, URL rejection and IDNA, re
 7. On the real deployment, check `/api/health`, `/api/features`, a controlled public HEAD/redirect target, a blocked private target, CSV training and artifact-backed prediction. Verify the console and mobile navigation. If outbound connection safety cannot be established, the online check must stay unavailable.
 
 **Vercel publication has not been performed in this cloud task:** no Vercel project or deployment credentials were supplied. Routing and configuration are provided, but an authenticated deployment and live smoke checks remain required. No claim of production deployment is made.
+
+### Python function bundle size
+
+Vercel's Vite/static builder otherwise auto-installs root `requirements.txt` into `.vercel_python_packages` before building the frontend. The Python function then installs the same dependencies into its own environment and, without an exclusion, also packages that first directory as application files. This duplicates the scientific stack and caused the 502.41 MiB `LAMBDA_SIZE_EXCEEDED` failure.
+
+`vercel.json` sets the frontend install command to `npm ci`, leaving Python installation to the Python builder. The function also excludes `.vercel_python_packages/**` (including leftovers from an older build cache) and frontend/test outputs. `ml/*.py` and `models/**` remain explicitly included; NumPy, Pandas, SciPy, scikit-learn and the other declared runtime dependencies remain managed by the Python builder. No ML functionality or model artifacts are removed. Node is pinned to `24.x` so new major releases are not selected automatically.
+
+Validated locally with `@vercel/python` 31.0.2, the builder used by Vercel CLI 65.15.0: the duplicate-directory case reproduced 502.41 MiB; the corrected Python 3.12 bundle was 188.96 MiB with that stale directory still present. The packaged API and model training also ran using a prewarmed runtime dependency cache. Vercel may optimize larger scientific dependencies into its managed runtime installation; a cold-start download could not be validated here because direct DNS is restricted. Final size depends on resolved wheels and any deployed model artifact; redeploy and check the live function.
 
 ## Project map
 
