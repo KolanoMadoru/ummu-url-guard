@@ -1,0 +1,1 @@
+No production classifier is bundled. Generate one with `python -m ml.train_local /path/to/labeled.csv`, review the actual report, then deliberately include the trusted artifact and matching metadata in deployment. Never deserialize an untrusted joblib/pickle file. Online experiments do not persist models.
