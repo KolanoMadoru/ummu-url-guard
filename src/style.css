@@ -827,3 +827,42 @@ li {
     animation: none;
   }
 }
+
+.dataset-drop {
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  padding: 10px;
+}
+.dataset-drop.drag-active {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+.dataset-drop .file-picker {
+  border: 0;
+  margin: 0;
+}
+.dataset-drop > p {
+  padding: 0 18px;
+  margin-bottom: 8px;
+}
+#dataset-progress {
+  width: 100%;
+  height: 14px;
+  accent-color: #2563eb;
+}
+a[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.dataset-readiness {
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid #dbeafe;
+  border-radius: 7px;
+  background: #eff6ff;
+}
+.dataset-readiness code {
+  display: block;
+  margin: 10px 0;
+  white-space: pre-wrap;
+}

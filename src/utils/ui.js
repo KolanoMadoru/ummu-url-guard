@@ -1,3 +1,5 @@
+import { datasetStore } from "./dataset-state.js";
+import { DATASET_LIMITS, formatBytes } from "./dataset-config.js";
 export const escape = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -28,20 +30,16 @@ export function busy(button, status) {
   button.classList.toggle("loading", status);
 }
 export function filePicker() {
-  return '<label class="file-picker">Labeled dataset <input type="file" id="dataset-file" accept=".csv,text/csv" /><span>UTF-8 CSV · url,label · up to 1,000 rows / 2 MiB online</span></label>';
+  return `<label class="file-picker">Labeled dataset <input type="file" id="dataset-file" accept=".csv,text/csv" /><span>UTF-8 CSV · url,label · up to ${DATASET_LIMITS.maxFileBytes / 1048576} MiB for browser validation</span></label>`;
 }
-export function bindFile(state) {
+export function bindFile() {
   const input = document.querySelector("#dataset-file");
   const selected = document.querySelector("#selected-file");
-  if (selected)
-    selected.textContent = state.file
-      ? `Selected: ${state.file.name}`
-      : "No dataset selected.";
-  input?.addEventListener("change", () => {
-    state.file = input.files[0] || null;
+  if (input) input.onchange = () => datasetStore.select(input.files[0] || null);
+  return datasetStore.subscribe((data) => {
     if (selected)
-      selected.textContent = state.file
-        ? `Selected: ${state.file.name}`
-        : "No dataset selected.";
+      selected.textContent = data.file
+        ? `Selected: ${data.name} · ${formatBytes(data.size)}`
+        : "No dataset selected. Select the file again after a refresh.";
   });
 }
