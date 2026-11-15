@@ -73,7 +73,8 @@ const navigation = [
   ["analysis", "Result Analysis", "file-chart-column"],
   ["history", "Detection History", "history"],
 ];
-const state = { health: null, file: null, dataset: null, report: null };
+const state = { health: null, report: null };
+let cleanupPage;
 
 document.querySelector("#app").innerHTML =
   `<aside id="sidebar"><a class="brand" href="#dashboard"><span class="brand-mark"><i data-lucide="shield-check"></i></span><span>UMMU <b>URL GUARD</b><small>RESEARCH WORKSPACE</small></span></a><p class="nav-label">WORKSPACE</p><nav aria-label="Main navigation">${navigation.map(([key, label, icon]) => `<a href="#${key}" data-page="${key}"><i data-lucide="${icon}"></i>${label}</a>`).join("")}</nav><div class="sidebar-note"><i data-lucide="graduation-cap"></i><strong>Built for research</strong><p>Real features. Reproducible experiments. Evidence you can inspect.</p></div><div class="sidebar-footer">UMMU URL GUARD <span>v0.1.0</span></div></aside>
@@ -88,6 +89,7 @@ function navigate(name) {
   else location.hash = name;
 }
 function route() {
+  cleanupPage?.();
   const key = Object.hasOwn(pages, location.hash.slice(1))
     ? location.hash.slice(1)
     : "dashboard";
@@ -98,7 +100,7 @@ function route() {
     else a.removeAttribute("aria-current");
   });
   document.querySelector("#content").innerHTML = pages[key].render(state);
-  pages[key].mount?.(state, navigate);
+  cleanupPage = pages[key].mount?.(state, navigate);
   document.body.classList.remove("nav-open");
   menu.setAttribute("aria-expanded", "false");
   createIcons({ icons });

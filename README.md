@@ -37,7 +37,27 @@ The current cloud machine can run the app and experiments but does not resolve a
 
 Bring a UTF-8 CSV containing `url,label`. Labels are `phishing` / `benign` or `1` / `0`. Verify provenance, collection dates, label quality, consent and licensing yourself; do not use real credentials in URLs.
 
-Online limits: 2 MiB, 1,000 source rows, at least 30 unique normalized URLs, at least 10 registered-domain groups, and at least 6 rows per label. Both classes must be present in all three partitions. Missing cells, invalid URLs, invalid labels and identical-URL label conflicts reject the upload with a useful error. Identical normalized duplicates with consistent labels are removed. Data is held only for the request, not persisted on Vercel or in browser storage.
+Online **training** limits (separate from browser validation): 2 MiB, 1,000 source rows, at least 30 unique normalized URLs, at least 10 registered-domain groups, and at least 6 rows per label. Both classes must be present in all three partitions. Missing cells, invalid URLs, invalid labels and identical-URL label conflicts reject the upload with a useful error. Identical normalized duplicates with consistent labels are removed. Data is held only for the request, not persisted on Vercel or in browser storage.
+
+### Browser validation up to 25 MiB
+
+Dataset Management validates CSV locally using a module Web Worker, Papa Parse's incremental parser, strict streaming UTF-8 decoding and incremental SHA-256. It does not call `file.text()` or load the complete file into an array. Progress comes from actual bytes read and records parsed. UTF-8 BOM, LF/CRLF, quoted commas, escaped quotes and multiline quoted fields are supported. Malformed CSV, invalid encoding and resource limits produce explicit failures.
+
+Select or drag and drop a CSV, then choose **Validate dataset**. Cancel terminates the worker; Reset clears the File and summary. Navigation keeps the File reference and state in session memory, including in-progress validation. A refresh discards them and asks you to select the file again. Neither datasets nor File objects enter localStorage.
+
+The summary reports total/valid/invalid records, missing values, malformed rows, invalid URL/label counts, duplicates across all chunks, conflicting labels, class distribution, and an exact file hash. Valid class counts include consistent duplicate rows, which are separately counted; no rows are silently removed by the browser. Every otherwise valid record in a conflicting URL group is reclassified invalid. Python removes consistent normalized duplicates before training. Browser normalization uses HTTP(S) syntax, IDNA hostnames, default ports and percent encoding; Python independently revalidates the original file and can reject additional cases. Neither validation route proves a URL safe.
+
+Only the first 50 masked preview records and first 100 issue events are retained; preview pages render 10 records at a time. All displayed CSV strings are escaped. Preview and exports mask origins, removing URL paths, query parameters and fragments. The worker retains bounded SHA-256 URL keys for whole-file duplicate detection and releases its data on completion, error or cancellation. Download Summary includes the source (`browser`) and any separately requested Python result. Export Validation Report is bounded and protects spreadsheet formulas.
+
+Default resource limits are **25 MiB**, **1,000,000 records**, **250,000 unique normalized URLs**, and **256 KiB per logical record**. Reading uses 256 KiB chunks. `.env.example` documents build-time `VITE_DATASET_MAX_MIB`, `VITE_DATASET_MAX_ROWS`, and `VITE_DATASET_MAX_UNIQUE_URLS` overrides (hard ceilings 100 MiB / 2 million records / 500,000 unique URLs). Files within the size limit may still exceed a row/unique-record budget; the error directs you to local processing. Changes require rebuilding Vite. Browser memory and speed vary by device.
+
+Large files are never posted to Vercel. For small valid files, **Verify small dataset with Python** explicitly uploads to `/api/dataset/analyze`, with a visible notice. The API helper rejects source files over 2 MiB before serialization and checks the actual serialized multipart byte size (2 MiB + 64 KiB maximum); it preserves the multipart boundary's case. HTTP status and Content-Type are checked before JSON parsing. Provider plaintext/HTML 413/422/429/5xx errors, malformed JSON, network failures, cancellation and timeouts are shown as useful errors, never as successful results or raw HTML.
+
+Model Training and Feature Experiment share the selected File and validation metadata. The selected full dataset must be valid and within the existing Python upload/row budgets to enable online training; Python still checks domain groups and class splits. A larger validated file shows **Large Dataset — Local Training Required**, disables online training and offers local instructions/configuration export. No sampling, chunk-wise training or combined chunk metrics occur. Experiment results remain tied to their own metadata even if another file is later selected.
+
+The old page uploaded the whole file into the 2 MiB / 1,000-row Python endpoint and called `response.json()` on any response, including provider errors. This explains the reported `Unexpected token 'R'` failure. The live deployment could not be inspected from this cloud environment (its hostname is blocked by the network proxy); no live-deployment fix is claimed before merging and redeploying.
+
+Validated locally: exact-size 500 KiB, 1, 2, 2.1, 3, 5, 10, 15, 20 and 25 MiB fixtures; 100, 1,000, 1,001, 5,000, 10,000, 50,000 and 100,000 records; chunk-invariant aggregation, invalid encoding, malformed CSV, conflicts, cancellation, limits and API error handling. Chromium exercises a 25 MiB file, 3 MiB reselection, navigation, cancel/reset, drag/drop, masking, pagination, download, refresh, plaintext 413 and the existing small-data training flow. These are synthetic test fixtures, not model research findings.
 
 For larger datasets or a permanent inference model:
 
@@ -122,7 +142,7 @@ Validated locally with `@vercel/python` 31.0.2, the builder used by Vercel CLI 6
 
 ## Project map
 
-- `src/pages/`: nine working pages; `src/utils/`: API, charts, escaping, masked browser storage and exports.
+- `src/pages/`: nine working pages; `src/utils/`: API, shared dataset state/configuration, chunked CSV aggregation, charts, escaping, masked browser storage and exports. `src/workers/csv-worker.js` performs browser validation; `src/components/dataset-readiness.js` connects training to the selected dataset.
 - `api/index.py`: FastAPI routes, request bounds, CORS, rate/concurrency guards.
 - `ml/features.py`, `scanner.py`, `dataset.py`, `model.py`, `evaluation.py`, `train_local.py`: shared Python logic and local training CLI.
 - `models/model_metadata.json`: honest untrained state; real artifacts are generated only from supplied data.

@@ -1,3 +1,5 @@
+import { datasetStore, trainingEligibility } from "../utils/dataset-state.js";
+import { bindDatasetReadiness } from "../components/dataset-readiness.js";
 import { api } from "../utils/api.js";
 import {
   heading,
@@ -10,7 +12,7 @@ import {
 import { saveSummary, download } from "../utils/storage.js";
 export function render(state) {
   return `${heading("Model Training", "Fit real models using independent registered-domain groups.")}
-    <div class="grid two"><section class="card"><h2>Run an online experiment</h2><p>Random Forest, Logistic Regression and Decision Tree share one held-out test set. Model selection uses validation F1.</p>${filePicker()}<p id="selected-file" class="hint"></p><button id="train" class="button">Start Training & Compare Models</button><p id="training-progress" role="status"></p><p id="training-error" class="error" role="alert" hidden></p></section>
+    <div class="grid two"><section class="card"><h2>Run an online experiment</h2><p>Random Forest, Logistic Regression and Decision Tree share one held-out test set. Model selection uses validation F1.</p>${filePicker()}<p id="selected-file" class="hint"></p><div id="dataset-readiness" class="dataset-readiness"></div><button id="train" class="button">Start Training & Compare Models</button><p id="training-progress" role="status"></p><p id="training-error" class="error" role="alert" hidden></p></section>
     <section class="card"><h3>Reproducible configuration</h3>${table(
       ["Parameter", "Value"],
       [
@@ -28,7 +30,8 @@ export function render(state) {
     <section class="card" id="training-result">${state.report ? '<h3>Experiment available in this session</h3><p>Open evaluation to inspect actual held-out results.</p><div class="actions"><a class="button" href="#evaluation">Evaluate Model</a><button class="button secondary" id="export-report">Export Results</button></div>' : "<h3>Production inference</h3><p>No production model is bundled. Train on a provenance-checked dataset locally, verify the output, then redeploy the artifact.</p><code>python -m ml.train_local /path/to/dataset.csv</code>"}</section>`;
 }
 export function mount(state, navigate) {
-  bindFile(state);
+  const unbindFile = bindFile();
+  const readiness = bindDatasetReadiness(document.querySelector("#train"));
   document
     .querySelector("#export-report")
     ?.addEventListener("click", () =>
@@ -37,21 +40,29 @@ export function mount(state, navigate) {
   const button = document.querySelector("#train");
   const error = document.querySelector("#training-error");
   button.onclick = async () => {
+    readiness.setBusy(true);
     busy(button, true);
     error.hidden = true;
     const status = document.querySelector("#training-progress");
     status.textContent =
       "Fitting three models and evaluating held-out data. This may take up to 35 seconds…";
     try {
-      if (!state.file) throw new Error("Select a labeled CSV first.");
-      state.report = await api("train", { file: state.file });
+      const dataset = datasetStore.get();
+      const eligibility = trainingEligibility(dataset);
+      if (!eligibility.eligible) throw new Error(eligibility.reason);
+      state.report = await api("train", { file: dataset.file });
       saveSummary(state.report);
       navigate("evaluation");
     } catch (e) {
       showError(error, e);
     } finally {
       busy(button, false);
+      readiness.setBusy(false);
       status.textContent = "";
     }
+  };
+  return () => {
+    unbindFile();
+    readiness.dispose();
   };
 }
