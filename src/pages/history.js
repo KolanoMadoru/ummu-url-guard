@@ -1,3 +1,4 @@
+import { displayText, classLabel } from "../utils/i18n.js";
 import { heading, escape } from "../utils/ui.js";
 import {
   history,
@@ -7,8 +8,8 @@ import {
   download,
 } from "../utils/storage.js";
 export function render() {
-  return `${heading("Detection History", "Local to this browser. Paths, query parameters and fragments are never saved.")}
-    <section class="card"><div class="history-tools"><label>Search origin<input id="history-search" type="search" placeholder="Search a domain…" /></label><label>Prediction<select id="history-filter"><option value="all">All results</option><option value="phishing">Phishing</option><option value="benign">Benign</option><option value="unavailable">Unavailable</option></select></label><button id="history-csv" class="button secondary">Export CSV</button><button id="history-json" class="button secondary">Export JSON</button><button id="history-clear" class="button danger">Clear all</button></div><div id="history-table"></div><p class="hint">Maximum 200 records. This data does not automatically sync across devices.</p><p id="history-message" role="status"></p></section>`;
+  return `${heading("Riwayat Deteksi", "Tersimpan di browser ini. Jalur, parameter kueri, dan fragmen tidak pernah disimpan.")}
+    <section class="card"><div class="history-tools"><label>Cari Riwayat<input id="history-search" type="search" placeholder="Cari domain…" /></label><label>Hasil Prediksi<select id="history-filter"><option value="all">Semua hasil</option><option value="phishing">Phishing</option><option value="benign">Aman (benign)</option><option value="unavailable">Tidak Tersedia</option></select></label><button id="history-csv" class="button secondary">Ekspor CSV</button><button id="history-json" class="button secondary">Ekspor JSON</button><button id="history-clear" class="button danger">Hapus Semua</button></div><div id="history-table"></div><p class="hint">Maksimal 200 data. Data tidak disinkronkan secara otomatis antarperangkat.</p><p id="history-message" role="status"></p></section>`;
 }
 export function mount() {
   const search = document.querySelector("#history-search");
@@ -24,7 +25,7 @@ export function mount() {
   function draw() {
     const rows = selected();
     document.querySelector("#history-table").innerHTML =
-      `<div class="table-wrap"><table><thead><tr>${["URL origin", "Prediction", "Online", "Redirects", "Time", "Model version", "Action"].map((x) => `<th scope="col">${x}</th>`).join("")}</tr></thead><tbody>${rows.length ? rows.map((r) => `<tr><td class="url-text">${escape(r.url)}</td><td><span class="badge ${escape(r.prediction || "unavailable")}">${escape(r.prediction || "Unavailable")}</span></td><td>${escape(r.online_status)}</td><td>${escape(r.redirects)}</td><td>${escape(new Date(r.timestamp).toLocaleString())}</td><td>${escape(r.model_version || "N/A")}</td><td><button class="text-button" data-delete="${escape(r.id)}">Delete</button></td></tr>`).join("") : '<tr><td colspan="7" class="empty">No matching scans.</td></tr>'}</tbody></table></div>`;
+      `<div class="table-wrap"><table><thead><tr>${["Asal URL", "Hasil Prediksi", "Jaringan", "Pengalihan", "Waktu", "Versi Model", "Tindakan"].map((x) => `<th scope="col">${x}</th>`).join("")}</tr></thead><tbody>${rows.length ? rows.map((r) => `<tr><td class="url-text">${escape(r.url)}</td><td><span class="badge ${escape(r.prediction || "unavailable")}">${escape(classLabel(r.prediction))}</span></td><td>${escape(displayText(r.online_status))}</td><td>${escape(r.redirects)}</td><td>${escape(new Date(r.timestamp).toLocaleString("id-ID"))}</td><td>${escape(r.model_version || "Tidak Tersedia")}</td><td><button class="text-button" data-delete="${escape(r.id)}">Hapus</button></td></tr>`).join("") : '<tr><td colspan="7" class="empty">Belum ada riwayat yang sesuai.</td></tr>'}</tbody></table></div>`;
     document.querySelectorAll("[data-delete]").forEach(
       (button) =>
         (button.onclick = () => {
@@ -36,7 +37,7 @@ export function mount() {
   search.oninput = draw;
   filter.onchange = draw;
   document.querySelector("#history-clear").onclick = () => {
-    if (confirm("Delete all detection history from this browser?")) {
+    if (confirm("Konfirmasi Penghapusan: hapus semua riwayat deteksi dari browser ini?")) {
       clearHistory();
       draw();
     }

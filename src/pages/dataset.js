@@ -1,3 +1,4 @@
+import { displayText, classLabel, errorText } from "../utils/i18n.js";
 import { api } from "../utils/api.js";
 import { heading, filePicker, table, escape } from "../utils/ui.js";
 import { download, csv } from "../utils/storage.js";
@@ -10,16 +11,16 @@ import {
 import { chart, clearCharts, plot } from "../utils/charts.js";
 
 export function render() {
-  return `${heading("Dataset Management", "Validate CSV files in your browser without uploading large payloads to Vercel.")}
-    <section class="card"><h2>Upload a CSV dataset</h2><p>Columns: <code>url,label</code>. Labels: <code>phishing = 1</code>, <code>benign = 0</code>. No URLs are opened.</p>
-      <div id="dataset-drop" class="dataset-drop" tabindex="0" aria-label="Drop a CSV file here">${filePicker()}<p>Drag and drop a CSV here, or use the file selector.</p></div>
-      <p id="selected-file" class="hint"></p><div class="actions"><button id="analyze" class="button" disabled>Validate dataset</button><button id="dataset-cancel" class="button secondary" disabled>Cancel Processing</button><button id="dataset-reset" class="button secondary">Reset Dataset</button></div>
+  return `${heading("Manajemen Dataset", "Validasi file CSV di browser tanpa mengunggah file besar ke Vercel.")}
+    <section class="card"><h2>Unggah Dataset CSV</h2><p>Kolom: <code>url,label</code>. Label: <code>phishing = 1</code>, <code>benign = 0</code>. URL tidak pernah dibuka.</p>
+      <div id="dataset-drop" class="dataset-drop" tabindex="0" aria-label="Letakkan file CSV di sini">${filePicker()}<p>Seret dan letakkan CSV di sini, atau gunakan pemilih file.</p></div>
+      <p id="selected-file" class="hint"></p><div class="actions"><button id="analyze" class="button" disabled>Validasi Dataset</button><button id="dataset-cancel" class="button secondary" disabled>Batalkan Pemrosesan</button><button id="dataset-reset" class="button secondary">Atur Ulang Dataset</button></div>
       <p id="dataset-error" class="error" role="alert" hidden></p>
     </section>
-    <section class="card" aria-label="Processing progress"><div class="section-heading"><h3 id="dataset-status" role="status">No File Selected</h3><span id="dataset-percent">0%</span></div><progress id="dataset-progress" value="0" max="100" aria-label="Dataset validation progress"></progress><p id="dataset-progress-text" class="hint"></p></section>
+    <section class="card" aria-label="Progres Pemrosesan"><div class="section-heading"><h3 id="dataset-status" role="status">Belum Ada File Terpilih</h3><span id="dataset-percent">0%</span></div><progress id="dataset-progress" value="0" max="100" aria-label="Progres validasi dataset"></progress><p id="dataset-progress-text" class="hint"></p></section>
     <div id="dataset-result"></div>
-    <section class="card"><div class="actions"><button id="summary-download" class="button secondary" disabled>Download Summary</button><button id="validation-download" class="button secondary" disabled>Export Validation Report</button><button id="python-verify" class="button secondary" disabled>Verify small dataset with Python</button><a id="continue-training" class="button secondary" href="#training" aria-disabled="true">Continue to Model Training</a></div><p id="dataset-eligibility" role="status"></p><p id="python-status" role="status" class="hint"></p></section>
-    <div class="notice">Dataset besar divalidasi langsung di browser. Kemampuan training online mengikuti batas resource backend. Validation is not model training. Only “Verify with Python” or online training uploads a small file (at most 2 MiB / 1,000 rows); large files stay in browser memory. Reselect the file after a browser refresh.</div>`;
+    <section class="card"><div class="actions"><button id="summary-download" class="button secondary" disabled>Unduh Ringkasan</button><button id="validation-download" class="button secondary" disabled>Ekspor Laporan Validasi</button><button id="python-verify" class="button secondary" disabled>Verifikasi Dataset Kecil dengan Python</button><a id="continue-training" class="button secondary" href="#training" aria-disabled="true">Lanjut ke Pelatihan Model</a></div><p id="dataset-eligibility" role="status"></p><p id="python-status" role="status" class="hint"></p></section>
+    <div class="notice">Dataset besar divalidasi langsung di browser. Pelatihan daring mengikuti batas sumber daya backend. Validasi bukan pelatihan model. Hanya verifikasi Python atau pelatihan daring yang mengunggah file kecil (maksimal 2 MiB / 1.000 baris); file besar tetap di memori browser. Pilih ulang file setelah memuat ulang halaman.</div>`;
 }
 export function mount() {
   const input = document.querySelector("#dataset-file");
@@ -50,7 +51,7 @@ export function mount() {
   drop.addEventListener("drop", (e) => {
     verification?.abort();
     if (e.dataTransfer.files.length !== 1) {
-      error.textContent = "Select exactly one CSV file.";
+      error.textContent = "Pilih tepat satu file CSV.";
       error.hidden = false;
       return;
     }
@@ -98,13 +99,13 @@ export function mount() {
   function preview(summary) {
     const target = document.querySelector("#preview-rows");
     target.innerHTML = table(
-      ["URL origin (masked)", "Label", "Validation status"],
+      ["Asal URL (disamarkan)", "Label", "Status Validasi"],
       summary.preview
         .slice(page * 10, page * 10 + 10)
-        .map((r) => [r.url, r.label, r.status]),
+        .map((r) => [displayText(r.url), classLabel(r.label), displayText(r.status)]),
     );
     document.querySelector("#preview-page").textContent =
-      `Page ${page + 1} of ${Math.max(1, Math.ceil(summary.preview.length / 10))} · first ${summary.preview.length} of ${summary.total_records.toLocaleString()} records`;
+      `Halaman ${page + 1} dari ${Math.max(1, Math.ceil(summary.preview.length / 10))} · ${summary.preview.length} data pertama dari ${summary.total_records.toLocaleString("id-ID")} data`;
     document.querySelector("#preview-prev").disabled = page === 0;
     document.querySelector("#preview-next").disabled =
       (page + 1) * 10 >= summary.preview.length;
@@ -112,14 +113,14 @@ export function mount() {
   const unsubscribe = datasetStore.subscribe((data) => {
     const running = ["Validating", "Processing"].includes(data.status);
     document.querySelector("#selected-file").textContent = data.file
-      ? `Selected: ${data.name} · ${formatBytes(data.size)}`
-      : "No file selected. Select the file again after a refresh.";
-    document.querySelector("#dataset-status").textContent = data.status;
+      ? `File Terpilih: ${data.name} · ${formatBytes(data.size)}`
+      : "Belum ada file terpilih. Pilih ulang file setelah memuat ulang halaman.";
+    document.querySelector("#dataset-status").textContent = displayText(data.status);
     document.querySelector("#dataset-percent").textContent =
       `${data.progress.percent}%`;
     document.querySelector("#dataset-progress").value = data.progress.percent;
     document.querySelector("#dataset-progress-text").textContent =
-      `${formatBytes(data.progress.bytes)} / ${formatBytes(data.size)} read · ${data.progress.rows.toLocaleString()} records processed`;
+      `${formatBytes(data.progress.bytes)} / ${formatBytes(data.size)} dibaca · ${data.progress.rows.toLocaleString("id-ID")} data diproses`;
     button.disabled =
       running ||
       !data.file ||
@@ -129,14 +130,14 @@ export function mount() {
     input.disabled = running;
     cancel.disabled = !running;
     error.hidden = !data.error;
-    error.textContent = data.error;
+    error.textContent = errorText(data.error);
     document.querySelector("#summary-download").disabled = !data.summary;
     document.querySelector("#validation-download").disabled = !data.summary;
     const eligibility = trainingEligibility(data);
     document.querySelector("#dataset-eligibility").textContent =
       data.status === "Validated"
-        ? `Dataset Ready · ${data.summary.valid_records.toLocaleString()} valid records. ${eligibility.reason}`
-        : "Validate the selected dataset before continuing.";
+        ? `Dataset Siap · ${data.summary.valid_records.toLocaleString("id-ID")} data valid. ${displayText(eligibility.reason)}`
+        : "Validasi dataset terpilih sebelum melanjutkan.";
     continueLink.setAttribute(
       "aria-disabled",
       String(data.status !== "Validated"),
@@ -148,7 +149,7 @@ export function mount() {
       data.size > ONLINE_LIMITS.maxFileBytes ||
       data.summary.total_records > ONLINE_LIMITS.maxRows;
     document.querySelector("#python-status").textContent = data.backend
-      ? "Python validation completed. Its summary is included in the download below."
+      ? "Validasi Python selesai. Ringkasannya disertakan dalam unduhan di bawah."
       : "";
     if (data.summary !== lastSummary) {
       lastSummary = data.summary;
@@ -159,38 +160,38 @@ export function mount() {
         return;
       }
       const s = data.summary;
-      output.innerHTML = `<section class="card"><h3>Validation summary</h3><p>Source: browser · ${escape(s.validation_status)}. ${escape(s.counting)}</p>${table(
-        ["Measure", "Value"],
+      output.innerHTML = `<section class="card"><h3>Ringkasan Validasi</h3><p>Sumber: browser · ${escape(displayText(s.validation_status))}. ${escape(displayText(s.counting))}</p>${table(
+        ["Ukuran", "Nilai"],
         [
-          ["Dataset name", s.dataset_name],
-          ["File size", formatBytes(s.file_size)],
-          ["Total Records", s.total_records],
-          ["Valid Records", s.valid_records],
-          ["Invalid Records", s.invalid_records],
-          ["Phishing URLs", s.class_distribution.phishing],
-          ["Benign URLs", s.class_distribution.benign],
-          ["Unique normalized URLs", s.unique_records],
-          ["Missing values (rows)", s.missing_values],
-          ["Missing URLs", s.missing_urls],
-          ["Missing labels", s.missing_labels],
-          ["Invalid URLs", s.invalid_urls],
-          ["Invalid labels", s.invalid_labels],
-          ["Duplicate Records", s.duplicate_records],
-          ["Conflicting Labels (URLs)", s.conflicting_labels],
-          ["Conflicting records", s.conflicting_records],
-          ["Malformed CSV rows", s.csv_error_records],
-          ["Blank rows ignored", s.blank_rows_ignored],
+          ["Nama Dataset", s.dataset_name],
+          ["Ukuran File", formatBytes(s.file_size)],
+          ["Total Data", s.total_records],
+          ["Data Valid", s.valid_records],
+          ["Data Tidak Valid", s.invalid_records],
+          ["URL Phishing", s.class_distribution.phishing],
+          ["URL Aman (benign)", s.class_distribution.benign],
+          ["URL Unik setelah Normalisasi", s.unique_records],
+          ["Nilai Kosong (baris)", s.missing_values],
+          ["URL Kosong", s.missing_urls],
+          ["Label Kosong", s.missing_labels],
+          ["URL Tidak Valid", s.invalid_urls],
+          ["Label Tidak Valid", s.invalid_labels],
+          ["Data Duplikat", s.duplicate_records],
+          ["Label Bertentangan (URL)", s.conflicting_labels],
+          ["Data dengan Label Bertentangan", s.conflicting_records],
+          ["Baris CSV Tidak Sesuai Format", s.csv_error_records],
+          ["Baris Kosong yang Diabaikan", s.blank_rows_ignored],
           ["SHA-256", s.dataset_hash],
         ],
-      )}</section><div class="grid two">${plot("dataset-classes", "Valid record class distribution")}<section class="card"><h3>Validation issues · first 100</h3>${table(
-        ["Logical CSV record (header = 1)", "Issue"],
-        s.errors.map((e) => [e.row, e.message]),
-      )}${s.errors_truncated ? "<p>Additional issues omitted from this bounded report.</p>" : ""}</section></div>
-      <section class="card"><h3>Dataset preview · first 50 records only</h3><div id="preview-rows"></div><div class="actions"><button id="preview-prev" class="button secondary">Previous preview page</button><span id="preview-page" class="hint"></span><button id="preview-next" class="button secondary">Next preview page</button></div></section>`;
+      )}</section><div class="grid two">${plot("dataset-classes", "Distribusi Kelas Data Valid")}<section class="card"><h3>Masalah Validasi · 100 Pertama</h3>${table(
+        ["Nomor Data CSV (judul kolom = 1)", "Masalah"],
+        s.errors.map((e) => [e.row, displayText(e.message)]),
+      )}${s.errors_truncated ? "<p>Masalah lainnya tidak ditampilkan karena batas laporan.</p>" : ""}</section></div>
+      <section class="card"><h3>Pratinjau Dataset · 50 Data Pertama</h3><div id="preview-rows"></div><div class="actions"><button id="preview-prev" class="button secondary">Halaman Pratinjau Sebelumnya</button><span id="preview-page" class="hint"></span><button id="preview-next" class="button secondary">Halaman Pratinjau Selanjutnya</button></div></section>`;
       chart(
         "dataset-classes",
         "doughnut",
-        ["Benign", "Phishing"],
+        ["Aman (benign)", "Phishing"],
         [s.class_distribution.benign, s.class_distribution.phishing],
       );
       document.querySelector("#preview-prev").onclick = () => {
@@ -211,7 +212,7 @@ export function mount() {
     verify.disabled = true;
     const status = document.querySelector("#python-status");
     status.textContent =
-      "Sending the selected small file to Python for independent validation…";
+      "Sedang mengirim file kecil terpilih ke Python untuk validasi independen…";
     try {
       const summary = await api("dataset/analyze", {
         file,
@@ -220,7 +221,7 @@ export function mount() {
       datasetStore.setBackend(summary, file);
     } catch (e) {
       error.hidden = false;
-      error.textContent = e.message;
+      error.textContent = errorText(e);
     } finally {
       verification = null;
       const current = datasetStore.get();

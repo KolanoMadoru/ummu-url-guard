@@ -1,3 +1,4 @@
+import { displayText } from "./utils/i18n.js";
 import "./style.css";
 import {
   createIcons,
@@ -63,22 +64,30 @@ const pages = {
   history,
 };
 const navigation = [
-  ["dashboard", "Dashboard", "layout-dashboard"],
-  ["scanner", "URL Scanner", "scan-line"],
-  ["dataset", "Dataset Management", "database"],
-  ["features", "Feature Extraction", "list-filter"],
-  ["training", "Model Training", "brain-circuit"],
-  ["evaluation", "Model Evaluation", "chart-no-axes-combined"],
-  ["experiments", "Feature Experiment", "flask-conical"],
-  ["analysis", "Result Analysis", "file-chart-column"],
-  ["history", "Detection History", "history"],
+  ["dashboard", "Dasbor", "layout-dashboard"],
+  ["scanner", "Pemindai URL", "scan-line"],
+  ["dataset", "Manajemen Dataset", "database"],
+  ["features", "Ekstraksi Fitur", "list-filter"],
+  ["training", "Pelatihan Model", "brain-circuit"],
+  ["evaluation", "Evaluasi Model", "chart-no-axes-combined"],
+  ["experiments", "Eksperimen Fitur", "flask-conical"],
+  ["analysis", "Analisis Hasil", "file-chart-column"],
+  ["history", "Riwayat Deteksi", "history"],
 ];
 const state = { health: null, report: null };
 let cleanupPage;
 
 document.querySelector("#app").innerHTML =
-  `<aside id="sidebar"><a class="brand" href="#dashboard"><span class="brand-mark"><i data-lucide="shield-check"></i></span><span>UMMU <b>URL GUARD</b><small>RESEARCH WORKSPACE</small></span></a><p class="nav-label">WORKSPACE</p><nav aria-label="Main navigation">${navigation.map(([key, label, icon]) => `<a href="#${key}" data-page="${key}"><i data-lucide="${icon}"></i>${label}</a>`).join("")}</nav><div class="sidebar-note"><i data-lucide="graduation-cap"></i><strong>Built for research</strong><p>Real features. Reproducible experiments. Evidence you can inspect.</p></div><div class="sidebar-footer">UMMU URL GUARD <span>v0.1.0</span></div></aside>
-  <div class="workspace"><header><div class="header-left"><button id="menu-toggle" class="icon-button" aria-label="Toggle navigation" aria-expanded="false" aria-controls="sidebar"><i data-lucide="menu"></i></button><span>Phishing URL Detection & Typosquatting Analysis</span></div><span id="api-status" class="connection"><span class="status-dot"></span>Connecting API</span></header><main id="content" tabindex="-1"></main><footer>UMMU URL GUARD · Research indicators, never a guarantee of website safety.<span>History stays in your browser</span></footer><p id="storage-warning" class="error" role="status"></p></div>`;
+  `<aside id="sidebar"><a class="brand" href="#dashboard"><span class="brand-mark"><i data-lucide="shield-check"></i></span><span>UMMU <b>URL GUARD</b></span></a><p class="nav-label">MENU UTAMA</p><nav aria-label="Navigasi utama">${navigation.map(([key, label, icon]) => `<a href="#${key}" data-page="${key}"><i data-lucide="${icon}"></i>${label}</a>`).join("")}</nav><div class="sidebar-note"><i data-lucide="graduation-cap"></i><strong>Dikembangkan untuk Penelitian</strong><p>Fitur nyata, eksperimen yang dapat direproduksi, dan hasil penelitian yang dapat diverifikasi.</p></div><div class="sidebar-footer">UMMU URL GUARD <span>v0.1.0</span></div></aside>
+  <div class="workspace"><header><div class="header-left"><button id="menu-toggle" class="icon-button" aria-label="Buka atau tutup navigasi" aria-expanded="false" aria-controls="sidebar"><i data-lucide="menu"></i></button><span>Deteksi Phishing pada URL Pendek dan Domain Typosquatting</span></div><span id="api-status" class="connection"><span class="status-dot"></span>Menghubungkan API</span></header><main id="content" tabindex="-1"></main><footer>Dibuat oleh Muhammad Rahman Muttaqin | NPM: 12105 55201 21 162</footer><p id="storage-warning" class="error" role="status"></p></div>`;
+// Localize native form validation independently of the browser's UI language.
+document.addEventListener("invalid", (event) => {
+  const input = event.target;
+  input.setCustomValidity("");
+  if (input.validity.valueMissing) input.setCustomValidity("Kolom ini wajib diisi.");
+  else if (input.validity.typeMismatch) input.setCustomValidity("Masukkan URL HTTP atau HTTPS yang valid.");
+}, true);
+document.addEventListener("input", (event) => event.target.setCustomValidity?.(""));
 const menu = document.querySelector("#menu-toggle");
 menu.onclick = () => {
   const opened = document.body.classList.toggle("nav-open");
@@ -104,7 +113,7 @@ function route() {
   document.body.classList.remove("nav-open");
   menu.setAttribute("aria-expanded", "false");
   createIcons({ icons });
-  document.querySelector("#storage-warning").textContent = getStorageWarning();
+  document.querySelector("#storage-warning").textContent = displayText(getStorageWarning());
 }
 window.addEventListener("hashchange", route);
 route();
@@ -112,9 +121,9 @@ api("health")
   .then((value) => {
     state.health = value;
     document.querySelector("#api-status").textContent =
-      "● Python API connected";
+      "● API Python Terhubung";
     if (!location.hash || location.hash === "#dashboard") route();
   })
   .catch(() => {
-    document.querySelector("#api-status").textContent = "● API unavailable";
+    document.querySelector("#api-status").textContent = "● API Python Tidak Terhubung";
   });

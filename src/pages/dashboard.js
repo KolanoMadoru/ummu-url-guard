@@ -1,3 +1,4 @@
+import { displayText } from "../utils/i18n.js";
 import { heading, percent, escape } from "../utils/ui.js";
 import { history, summaries } from "../utils/storage.js";
 import { chart, plot } from "../utils/charts.js";
@@ -5,36 +6,36 @@ export function render(state) {
   const records = history();
   const count = (predicate) => records.filter(predicate).length;
   const cards = [
-    ["Total URL Scanned", records.length, "scan-line"],
+    ["Total URL Dipindai", records.length, "scan-line"],
     [
-      "Predicted Phishing",
+      "Prediksi Phishing",
       count((x) => x.prediction === "phishing"),
       "shield-alert",
     ],
     [
-      "Predicted Benign",
+      "Prediksi Aman",
       count((x) => x.prediction === "benign"),
       "shield-check",
     ],
-    ["Suspicious Short URLs", count((x) => x.shortener), "link"],
+    ["URL Pendek Mencurigakan", count((x) => x.shortener), "link"],
     [
-      "Typosquatting Indicators",
+      "Indikator Typosquatting",
       count((x) => x.typosquatting),
       "text-cursor-input",
     ],
     [
-      "Production Model Accuracy",
+      "Akurasi Model",
       state.health?.model_available
         ? percent(state.health.model_metrics?.accuracy)
-        : "Model not available",
+        : "Model Belum Tersedia",
       "chart-no-axes-combined",
     ],
   ];
-  return `${heading("Research dashboard", "A clear view of your URL checks and model research.", '<a class="button" href="#scanner"><i data-lucide="scan-line"></i> Scan a URL</a>')}
-    <div class="notice"><i data-lucide="info"></i><div>Evidence first. Predictions are model estimates, never a guarantee of website safety. Short URLs and similar domains are indicators, not phishing labels.</div></div>
-    <div class="stats">${cards.map(([label, value, icon]) => `<section class="stat"><div class="stat-label">${label}<i data-lucide="${icon}"></i></div><strong>${value}</strong><span>From actual local activity or deployed model</span></section>`).join("")}</div>
-    ${records.length ? `<div class="grid two">${plot("prediction-chart", "Prediction distribution")}${plot("time-chart", "Checks over time")}${plot("short-chart", "Short URL proportion")}${plot("typo-chart", "Typosquatting indicators")}</div>` : '<section class="card welcome"><i data-lucide="shield-check"></i><h2>Your research starts here</h2><p>No URLs have been scanned in this browser. Check a URL for real lexical features and network metadata, or upload a labeled dataset to train models.</p><div class="actions"><a class="button" href="#scanner">Open URL Scanner</a><a class="button secondary" href="#dataset">Upload a dataset</a></div></section>'}
-    <section class="card"><h3>Workspace status</h3><div class="status-list"><span>Python API</span><b>${state.health ? "Connected" : "Unavailable — start the backend"}</b><span>Production model</span><b>${escape(state.health?.model_reason || state.health?.model_version || "Unavailable")}</b><span>Saved experiment summaries</span><b>${summaries().length}</b><span>History storage</span><b>This browser only · maximum 200 records · origin masked</b></div></section>`;
+  return `${heading("Deteksi Phishing pada URL Pendek dan Domain Typosquatting", "Dasbor pemeriksaan URL dan penelitian model.", '<a class="button" href="#scanner"><i data-lucide="scan-line"></i> Pindai URL</a>')}
+    <div class="notice"><i data-lucide="info"></i><div>Hasil prediksi machine learning merupakan indikator dan bukan jaminan keamanan suatu website. Prediksi Aman menunjukkan kelas benign menurut model. URL pendek dan kemiripan domain bukan penentu phishing.</div></div>
+    <div class="stats">${cards.map(([label, value, icon]) => `<section class="stat"><div class="stat-label">${label}<i data-lucide="${icon}"></i></div><strong>${value}</strong><span>Berdasarkan aktivitas lokal atau model yang diterapkan</span></section>`).join("")}</div>
+    ${records.length ? `<div class="grid two">${plot("prediction-chart", "Distribusi Hasil Prediksi")}${plot("time-chart", "Pemindaian dari Waktu ke Waktu")}${plot("short-chart", "Proporsi URL Pendek")}${plot("typo-chart", "Indikator Typosquatting")}</div>` : '<section class="card welcome"><i data-lucide="shield-check"></i><h2>Mulai Penelitian Anda</h2><p>Belum Ada Data. Pindai URL untuk melihat fitur leksikal dan metadata jaringan, atau unggah dataset berlabel untuk melatih model.</p><div class="actions"><a class="button" href="#scanner">Buka Pemindai URL</a><a class="button secondary" href="#dataset">Unggah Dataset</a></div></section>'}
+    <section class="card"><h3>Status Aplikasi</h3><div class="status-list"><span>API Python</span><b>${state.health ? "Terhubung" : "Tidak tersedia — jalankan backend"}</b><span>Model produksi</span><b>${escape(state.health?.model_reason ? displayText(state.health.model_reason) : state.health?.model_version || "Tidak Tersedia")}</b><span>Ringkasan eksperimen tersimpan</span><b>${summaries().length}</b><span>Penyimpanan riwayat</span><b>Hanya di browser ini · maksimal 200 data · URL disamarkan</b></div></section>`;
 }
 export function mount() {
   const records = history();
@@ -42,7 +43,7 @@ export function mount() {
   chart(
     "prediction-chart",
     "doughnut",
-    ["Unavailable", "Phishing", "Benign"],
+    ["Tidak Tersedia", "Phishing", "Aman (benign)"],
     [
       records.filter((x) => !x.prediction).length,
       records.filter((x) => x.prediction === "phishing").length,
@@ -60,12 +61,12 @@ export function mount() {
     "line",
     sorted,
     sorted.map((x) => days[x]),
-    "URL checks",
+    "Pemindaian URL",
   );
   chart(
     "short-chart",
     "doughnut",
-    ["Known shortener", "Other URL"],
+    ["Pemendek yang dikenal", "URL lainnya"],
     [
       records.filter((x) => x.shortener).length,
       records.filter((x) => !x.shortener).length,
@@ -74,7 +75,7 @@ export function mount() {
   chart(
     "typo-chart",
     "doughnut",
-    ["Indicator present", "No indicator"],
+    ["Indikator ditemukan", "Tanpa indikator"],
     [
       records.filter((x) => x.typosquatting).length,
       records.filter((x) => !x.typosquatting).length,

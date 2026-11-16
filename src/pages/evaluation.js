@@ -1,3 +1,4 @@
+import { displayText } from "../utils/i18n.js";
 import {
   heading,
   empty,
@@ -22,20 +23,20 @@ export function comparison(report) {
   return table(
     [
       "Model",
-      "Feature set",
-      "Accuracy",
-      "Precision",
+      "Kelompok Fitur",
+      "Akurasi",
+      "Presisi",
       "Recall",
-      "F1",
+      "Skor F1",
       "ROC-AUC",
       "PR-AUC (AP)",
-      "Selected on validation",
+      "Dipilih melalui validasi",
     ],
     report.results.map((r) => [
       r.model_name,
-      r.feature_set,
+      displayText(r.feature_set),
       ...metricKeys.map((k) => percent(r.metrics[k])),
-      r.selected_on_validation ? "Yes" : "No",
+      r.selected_on_validation ? "Ya" : "Tidak",
     ]),
   );
 }
@@ -44,40 +45,43 @@ export function render(state) {
   const rf = report?.results.find(
     (r) => r.model_name === "Random Forest" && r.feature_set === "extended",
   );
-  return `${heading("Model Evaluation", "Actual held-out performance. Positive class: phishing. Undefined metrics are N/A.")}
+  return `${heading("Evaluasi Model", "Performa pada data uji terpisah. Kelas positif: phishing. Metrik yang tidak terdefinisi ditandai Tidak Tersedia.")}
     ${
       report
-        ? `<section class="card"><div class="section-heading"><h3>Model comparison</h3><button class="button secondary" id="evaluation-export">Export Results</button></div><p class="hint">Experiment ${escape(report.experiment_id)} · ${escape(report.evaluation_timestamp)}</p>${comparison(report)}</section><div class="grid two">${plot("roc", "Random Forest · ROC curve")}${plot("pr", "Random Forest · precision-recall curve")}</div><div class="grid two"><section class="card"><h3>Random Forest confusion matrix</h3><p class="hint">Rows: actual · columns: predicted</p>${table(
-            ["Actual / predicted", "Benign", "Phishing"],
+        ? `<section class="card"><div class="section-heading"><h3>Perbandingan Model</h3><button class="button secondary" id="evaluation-export">Ekspor Hasil</button></div><p class="hint">Eksperimen ${escape(report.experiment_id)} · ${escape(report.evaluation_timestamp)}</p>${comparison(report)}</section><div class="grid two">${plot("roc", "Random Forest · Kurva ROC")}${plot("pr", "Random Forest · Kurva Presisi-Recall")}</div><div class="grid two"><section class="card"><h3>Matriks Kebingungan Random Forest</h3><p class="hint">Baris: kelas aktual · kolom: prediksi</p>${table(
+            ["Aktual / prediksi", "Aman (benign)", "Phishing"],
             [
-              ["Benign", ...rf.metrics.confusion_matrix[0]],
+              ["Aman (benign)", ...rf.metrics.confusion_matrix[0]],
               ["Phishing", ...rf.metrics.confusion_matrix[1]],
             ],
-          )}</section>${plot("test-classes", "Test class distribution")}</div><section class="card"><h3>Split audit</h3><p>${escape(report.split_method)}</p>${table(
-            ["Partition", "Rows", "Domain groups", "Benign", "Phishing"],
+          )}</section>${plot("test-classes", "Distribusi Kelas Data Uji")}</div><section class="card"><h3>Audit Pembagian Data</h3><p>${escape(displayText(report.split_method))}</p>${table(
+            ["Partisi", "Jumlah Data", "Kelompok Domain", "Aman (benign)", "Phishing"],
             Object.entries(report.split).map(([name, part]) => [
-              name,
+              displayText(name),
               part.rows,
               part.groups,
               part.class_distribution.benign,
               part.class_distribution.phishing,
             ]),
-          )}<p class="hint">Validation selects the model; test metrics are not tuning targets. PR-AUC is reported as average precision.</p></section>`
+          )}<p class="hint">Validasi digunakan untuk memilih model; metrik data uji bukan target penyetelan. PR-AUC dilaporkan sebagai rerata presisi.</p></section>`
         : empty()
     }
-    <section class="card"><h3>Evaluate independent held-out predictions</h3><p>Upload JSON with <code>actual</code>, <code>predicted</code> (0=benign, 1=phishing), and <code>phishing_scores</code> arrays. This recomputes metrics; it does not certify dataset provenance.</p><input id="evaluation-file" type="file" accept=".json,application/json" /><button class="button secondary" id="evaluate-upload">Evaluate predictions</button><p class="error" id="evaluation-error" role="alert" hidden></p><div id="independent-metrics"></div></section>`;
+    <section class="card"><h3>Evaluasi Prediksi pada Data Uji Independen</h3><p>Unggah JSON berisi larik <code>actual</code>, <code>predicted</code> (0=benign, 1=phishing), dan <code>phishing_scores</code>. Metrik dihitung ulang; asal-usul dataset tetap harus diverifikasi.</p><label class="file-picker" for="evaluation-file">Pilih File Prediksi JSON<input class="visually-hidden" id="evaluation-file" type="file" accept=".json,application/json" /><span class="file-select" aria-hidden="true">Pilih File</span></label><p id="evaluation-selected" class="hint" role="status">Belum ada file terpilih.</p><button class="button secondary" id="evaluate-upload">Evaluasi Prediksi</button><p class="error" id="evaluation-error" role="alert" hidden></p><div id="independent-metrics"></div></section>`;
 }
 export function mount(state) {
+  document.querySelector("#evaluation-file").onchange = (event) => {
+    document.querySelector("#evaluation-selected").textContent = event.target.files[0]?.name || "Belum ada file terpilih.";
+  };
   const rf = state.report?.results.find(
     (r) => r.model_name === "Random Forest" && r.feature_set === "extended",
   );
   if (rf) {
     curve("roc", rf.metrics.roc_curve, "ROC");
-    curve("pr", rf.metrics.pr_curve, "Precision-recall");
+    curve("pr", rf.metrics.pr_curve, "Presisi-Recall");
     chart(
       "test-classes",
       "doughnut",
-      ["Benign", "Phishing"],
+      ["Aman (benign)", "Phishing"],
       [
         rf.metrics.class_distribution.benign,
         rf.metrics.class_distribution.phishing,
@@ -97,13 +101,13 @@ export function mount(state) {
     try {
       const file = document.querySelector("#evaluation-file").files[0];
       if (!file || file.size > 250000)
-        throw new Error("Select a predictions JSON file smaller than 250 KB.");
+        throw new Error("Pilih file prediksi JSON berukuran kurang dari 250 KB.");
       const result = await api("evaluate", {
         json: JSON.parse(await file.text()),
       });
       document.querySelector("#independent-metrics").innerHTML = table(
-        ["Metric", "Value"],
-        metricKeys.map((k) => [k, percent(result.metrics[k])]),
+        ["Metrik", "Nilai"],
+        metricKeys.map((k) => [displayText(k), displayText(percent(result.metrics[k]))]),
       );
     } catch (e) {
       showError(error, e);
