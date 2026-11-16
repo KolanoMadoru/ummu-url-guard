@@ -1,3 +1,4 @@
+import { displayText } from "../utils/i18n.js";
 import { datasetStore, trainingEligibility } from "../utils/dataset-state.js";
 import { bindDatasetReadiness } from "../components/dataset-readiness.js";
 import { api } from "../utils/api.js";
@@ -16,9 +17,9 @@ export function render(state) {
   const report = state.report?.feature_sets.includes("basic")
     ? state.report
     : null;
-  return `${heading("Feature Experiment", "Compare basic and extended features with identical domain-disjoint data partitions.")}
-    <section class="card"><div class="grid two"><div><h3>A · Basic lexical features</h3><p>URL length, domain length, digits, dots, hyphens, special characters and subdomain count.</p></div><div><h3>B · Extended features</h3><p>Basic plus entropy, keyword count, shortener indicator, registered-domain structure, typosquatting similarity, HTTPS, IP and ratios.</p></div></div>${filePicker()}<p id="selected-file" class="hint"></p><div id="dataset-readiness" class="dataset-readiness"></div><button id="run-experiment" class="button">Run A / B experiment</button><p id="experiment-progress" role="status"></p><p class="error" id="experiment-error" role="alert" hidden></p></section>
-    ${report ? `<section class="card"><h3>Six models · one common test partition</h3>${comparison(report)}</section><div class="grid two">${plot("ab-accuracy", "Random Forest · accuracy")}${plot("ab-f1", "Random Forest · F1")}${plot("ab-recall", "Random Forest · recall")}${plot("ab-pr", "Random Forest · PR-AUC (average precision)")}</div>` : empty("Run the A / B experiment to compare actual feature sets. Added features may improve or worsen performance.")}`;
+  return `${heading("Eksperimen Fitur", "Bandingkan fitur dasar dan fitur tambahan pada partisi data yang sama tanpa irisan domain.")}
+    <section class="card"><div class="grid two"><div><h3>A · Fitur Dasar</h3><p>Panjang URL, panjang domain, angka, titik, tanda hubung, karakter khusus, dan jumlah subdomain.</p></div><div><h3>B · Fitur Tambahan</h3><p>Fitur dasar ditambah entropi, jumlah kata kunci, indikator pemendek, struktur domain terdaftar, kemiripan typosquatting, HTTPS, IP, dan rasio.</p></div></div>${filePicker()}<p id="selected-file" class="hint"></p><div id="dataset-readiness" class="dataset-readiness"></div><button id="run-experiment" class="button">Jalankan Eksperimen A / B</button><p id="experiment-progress" role="status"></p><p class="error" id="experiment-error" role="alert" hidden></p></section>
+    ${report ? `<section class="card"><h3>Enam Model · Satu Partisi Uji yang Sama</h3>${comparison(report)}</section><div class="grid two">${plot("ab-accuracy", "Random Forest · Akurasi")}${plot("ab-f1", "Random Forest · F1")}${plot("ab-recall", "Random Forest · Recall")}${plot("ab-pr", "Random Forest · PR-AUC (rerata presisi)")}</div>` : empty("Jalankan eksperimen A / B untuk membandingkan kedua kelompok fitur. Fitur tambahan dapat meningkatkan atau menurunkan performa.")}`;
 }
 export function mount(state, navigate) {
   const unbindFile = bindFile();
@@ -39,9 +40,9 @@ export function mount(state, navigate) {
       chart(
         id,
         "bar",
-        rf.map((r) => r.feature_set),
+        rf.map((r) => displayText(r.feature_set)),
         rf.map((r) => r.metrics[key]),
-        key,
+        displayText(key),
       ),
     );
   }
@@ -53,7 +54,7 @@ export function mount(state, navigate) {
     readiness.setBusy(true);
     busy(button, true);
     status.textContent =
-      "Training six model / feature-set combinations on the same partitions…";
+      "Sedang melatih enam kombinasi model dan kelompok fitur pada partisi yang sama…";
     try {
       const dataset = datasetStore.get();
       const eligibility = trainingEligibility(dataset);

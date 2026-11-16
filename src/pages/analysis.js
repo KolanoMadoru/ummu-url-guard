@@ -1,3 +1,4 @@
+import { displayText, featureLabel, classLabel } from "../utils/i18n.js";
 import { heading, empty, table, escape, percent } from "../utils/ui.js";
 import { comparison } from "./evaluation.js";
 import { download, csv } from "../utils/storage.js";
@@ -7,8 +8,8 @@ export function render(state) {
   if (!r)
     return (
       heading(
-        "Result Analysis",
-        "Interpret evidence, error patterns and reproducibility metadata.",
+        "Analisis Hasil",
+        "Tafsirkan bukti, pola kesalahan, dan metadata untuk reproduksi hasil.",
       ) + empty()
     );
   const rf = r.results.find(
@@ -17,40 +18,40 @@ export function render(state) {
   const sorted = Object.entries(rf.feature_importance).sort(
     (a, b) => b[1] - a[1],
   );
-  return `${heading("Result Analysis", "Review actual model errors and export a reproducible research record.")}
-    <section class="card"><div class="actions"><button class="button" id="export-json">Export JSON</button><button class="button secondary" id="export-csv">Export metrics CSV</button><button class="button secondary" id="export-research">Export research summary</button></div></section>
-    <div class="grid two">${plot("importance", "Extended Random Forest · top feature importance")}<section class="card"><h3>Feature ranking</h3><p class="hint">Impurity importance is associative, can favor high-cardinality features, and is not causal evidence.</p>${table(
-      ["Rank", "Feature", "Importance"],
-      sorted.map(([key, value], i) => [i + 1, key, percent(value)]),
+  return `${heading("Analisis Hasil", "Periksa kesalahan model dan ekspor catatan penelitian yang dapat direproduksi.")}
+    <section class="card"><div class="actions"><button class="button" id="export-json">Ekspor JSON</button><button class="button secondary" id="export-csv">Ekspor Metrik CSV</button><button class="button secondary" id="export-research">Ekspor Ringkasan Penelitian</button></div></section>
+    <div class="grid two">${plot("importance", "Random Forest dengan Fitur Tambahan · Tingkat Kepentingan Fitur")}<section class="card"><h3>Peringkat Fitur</h3><p class="hint">Kepentingan berbasis impuritas bersifat asosiatif, dapat mengunggulkan fitur dengan banyak nilai unik, dan bukan bukti sebab-akibat.</p>${table(
+      ["Peringkat", "Nama Fitur", "Tingkat Kepentingan"],
+      sorted.map(([key, value], i) => [i + 1, featureLabel(key), percent(value)]),
     )}</section></div>
-    <section class="card"><h3>False positives and false negatives</h3><p class="hint">Only errors from the held-out test set. URLs are masked to the origin.</p>${table(
-      ["Model", "Features", "URL origin", "Actual", "Predicted", "Error"],
+    <section class="card"><h3>Positif Palsu dan Negatif Palsu</h3><p class="hint">Hanya kesalahan pada data uji terpisah. URL disamarkan hingga menyisakan asalnya.</p>${table(
+      ["Model", "Fitur", "Asal URL", "Aktual", "Prediksi", "Kesalahan"],
       r.results.flatMap((model) =>
         model.errors.map((error) => [
           model.model_name,
-          model.feature_set,
+          displayText(model.feature_set),
           error.url,
-          error.actual,
-          error.predicted,
-          error.type,
+          classLabel(error.actual),
+          classLabel(error.predicted),
+          displayText(error.type),
         ]),
       ),
     )}</section>
-    <section class="card"><h3>Model comparison</h3>${comparison(r)}</section><section class="card"><h3>Reproducibility record</h3>${table(
-      ["Field", "Value"],
+    <section class="card"><h3>Perbandingan Model</h3>${comparison(r)}</section><section class="card"><h3>Catatan Reproduksi Hasil</h3>${table(
+      ["Kolom", "Nilai"],
       [
-        ["Experiment ID", r.experiment_id],
-        ["Dataset name", r.dataset_name],
+        ["ID Eksperimen", r.experiment_id],
+        ["Nama Dataset", r.dataset_name],
         ["Dataset SHA-256", r.dataset_hash],
-        ["Model version", r.model_version],
-        ["Feature sets", r.feature_sets.join(", ")],
-        ["Schema", r.schema_version],
-        ["Random seed", r.random_seed],
-        ["Effective split seed", r.split_seed],
-        ["Evaluated at", r.evaluation_timestamp],
-        ["Partition method", r.split_method],
+        ["Versi Model", r.model_version],
+        ["Kelompok Fitur", r.feature_sets.map(displayText).join(", ")],
+        ["Skema", r.schema_version],
+        ["Nilai Awal Acak", r.random_seed],
+        ["Nilai Awal Pembagian Efektif", r.split_seed],
+        ["Waktu Evaluasi", r.evaluation_timestamp],
+        ["Metode Pembagian", displayText(r.split_method)],
       ],
-    )}<ul>${r.notes.map((note) => `<li>${escape(note)}</li>`).join("")}</ul></section>`;
+    )}<ul>${r.notes.map((note) => `<li>${escape(displayText(note))}</li>`).join("")}</ul></section>`;
 }
 export function mount(state) {
   const r = state.report;
@@ -64,9 +65,9 @@ export function mount(state) {
   chart(
     "importance",
     "bar",
-    entries.map((x) => x[0]),
+    entries.map((x) => featureLabel(x[0])),
     entries.map((x) => x[1]),
-    "Importance",
+    "Tingkat Kepentingan",
   );
   document.querySelector("#export-json").onclick = () =>
     download("experiment.json", r);
@@ -100,18 +101,18 @@ export function mount(state) {
     download(
       "research-summary.txt",
       [
-        "UMMU URL GUARD — research summary",
-        `Experiment: ${r.experiment_id}`,
+        "UMMU URL GUARD — Ringkasan Penelitian",
+        `Eksperimen: ${r.experiment_id}`,
         `Dataset SHA-256: ${r.dataset_hash}`,
-        `Evaluated: ${r.evaluation_timestamp}`,
-        `Seed: ${r.random_seed}; split seed: ${r.split_seed}`,
-        r.split_method,
+        `Dievaluasi: ${r.evaluation_timestamp}`,
+        `Nilai awal acak: ${r.random_seed}; nilai awal pembagian: ${r.split_seed}`,
+        displayText(r.split_method),
         ...r.results.map(
           (x) =>
-            `${x.model_name} (${x.feature_set}): accuracy ${percent(x.metrics.accuracy)}, precision ${percent(x.metrics.precision)}, recall ${percent(x.metrics.recall)}, F1 ${percent(x.metrics.f1)}, ROC-AUC ${percent(x.metrics.roc_auc)}, PR-AUC (AP) ${percent(x.metrics.pr_auc)}. Errors: ${x.errors.length}.`,
+            `${x.model_name} (${displayText(x.feature_set)}): akurasi ${percent(x.metrics.accuracy)}, presisi ${percent(x.metrics.precision)}, recall ${percent(x.metrics.recall)}, F1 ${percent(x.metrics.f1)}, ROC-AUC ${percent(x.metrics.roc_auc)}, PR-AUC (AP) ${percent(x.metrics.pr_auc)}. Kesalahan: ${x.errors.length}.`,
         ),
-        ...r.notes,
-        "Machine learning prediction is an indicator, not a guarantee of website safety.",
+        ...r.notes.map(displayText),
+        "Hasil prediksi machine learning merupakan indikator dan bukan jaminan keamanan suatu website.",
       ].join("\n"),
       "text/plain",
     );

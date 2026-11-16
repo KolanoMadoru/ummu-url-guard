@@ -1,9 +1,10 @@
+import { displayText, featureLabel, featureDefinition } from "../utils/i18n.js";
 import { api } from "../utils/api.js";
 import { heading, table, showError, busy } from "../utils/ui.js";
 import { csv, download } from "../utils/storage.js";
 export function render() {
-  return `${heading("Feature Extraction", "Explore the same deterministic Python features used for training and inference.")}
-    <section class="card"><form id="feature-form"><label for="feature-url">URL</label><div class="input-row"><input type="url" id="feature-url" placeholder="https://example.com/login" required maxlength="4096" /><button class="button" id="extract">Extract features</button></div></form><p id="feature-error" role="alert" class="error" hidden></p></section><div id="feature-result"></div>`;
+  return `${heading("Ekstraksi Fitur", "Periksa fitur Python deterministik yang juga digunakan untuk pelatihan dan inferensi.")}
+    <section class="card"><form id="feature-form"><label for="feature-url">URL</label><div class="input-row"><input type="url" id="feature-url" placeholder="https://example.com/login" required maxlength="4096" /><button class="button" id="extract">Ekstraksi Fitur</button></div></form><p id="feature-error" role="alert" class="error" hidden></p></section><div id="feature-result"></div>`;
 }
 export function mount(state) {
   document.querySelector("#feature-form").onsubmit = async (event) => {
@@ -27,15 +28,15 @@ export function mount(state) {
         importance: rf?.feature_importance?.[key] ?? "N/A",
       }));
       document.querySelector("#feature-result").innerHTML =
-        `<section class="card"><div class="section-heading"><h3>Schema: ${data.schema_version}</h3><button class="button secondary" id="export-features">Export features CSV</button></div>${table(
+        `<section class="card"><div class="section-heading"><h3>Skema: ${data.schema_version}</h3><button class="button secondary" id="export-features">Ekspor Fitur CSV</button></div>${table(
           [
-            "Feature",
-            "Value",
-            "Type",
-            "Definition",
-            "Experiment RF importance",
+            "Nama Fitur",
+            "Nilai",
+            "Tipe",
+            "Keterangan",
+            "Tingkat kepentingan pada eksperimen RF",
           ],
-          rows.map((r) => Object.values(r)),
+          rows.map((r) => [featureLabel(r.feature), r.value, displayText(r.type), featureDefinition(r.feature, r.description), displayText(r.importance)]),
         )}</section>`;
       document.querySelector("#export-features").onclick = () =>
         download("features.csv", csv(rows), "text/csv");

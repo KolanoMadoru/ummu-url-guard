@@ -11,10 +11,10 @@ import {
 } from "../utils/ui.js";
 import { saveSummary, download } from "../utils/storage.js";
 export function render(state) {
-  return `${heading("Model Training", "Fit real models using independent registered-domain groups.")}
-    <div class="grid two"><section class="card"><h2>Run an online experiment</h2><p>Random Forest, Logistic Regression and Decision Tree share one held-out test set. Model selection uses validation F1.</p>${filePicker()}<p id="selected-file" class="hint"></p><div id="dataset-readiness" class="dataset-readiness"></div><button id="train" class="button">Start Training & Compare Models</button><p id="training-progress" role="status"></p><p id="training-error" class="error" role="alert" hidden></p></section>
-    <section class="card"><h3>Reproducible configuration</h3>${table(
-      ["Parameter", "Value"],
+  return `${heading("Pelatihan Model", "Latih model menggunakan kelompok domain terdaftar yang independen.")}
+    <div class="grid two"><section class="card"><h2>Jalankan Eksperimen Daring</h2><p>Random Forest, Logistic Regression, dan Decision Tree menggunakan satu set data uji terpisah. Pemilihan model menggunakan skor F1 validasi.</p>${filePicker()}<p id="selected-file" class="hint"></p><div id="dataset-readiness" class="dataset-readiness"></div><button id="train" class="button">Mulai Pelatihan & Bandingkan Model</button><p id="training-progress" role="status"></p><p id="training-error" class="error" role="alert" hidden></p></section>
+    <section class="card"><h3>Konfigurasi yang Dapat Direproduksi</h3>${table(
+      ["Parameter", "Nilai"],
       [
         ["n_estimators", 80],
         ["max_depth", 16],
@@ -23,11 +23,11 @@ export function render(state) {
         ["class_weight", "balanced"],
         ["random_state", 42],
         ["n_jobs", 1],
-        ["Group split target", "70% train / 15% validation / 15% test"],
+        ["Target pembagian kelompok", "70% pelatihan / 15% validasi / 15% pengujian"],
       ],
     )}</section></div>
-    <div class="notice">Minimum 30 unique URLs, 10 registered-domain groups and 6 records per class. Both labels must occur in each split. Online experiments never replace the deployed model. Keep a final external holdout for research claims.</div>
-    <section class="card" id="training-result">${state.report ? '<h3>Experiment available in this session</h3><p>Open evaluation to inspect actual held-out results.</p><div class="actions"><a class="button" href="#evaluation">Evaluate Model</a><button class="button secondary" id="export-report">Export Results</button></div>' : "<h3>Production inference</h3><p>No production model is bundled. Train on a provenance-checked dataset locally, verify the output, then redeploy the artifact.</p><code>python -m ml.train_local /path/to/dataset.csv</code>"}</section>`;
+    <div class="notice">Minimal 30 URL unik, 10 kelompok domain terdaftar, dan 6 data per kelas. Kedua label harus ada di setiap partisi. Eksperimen daring tidak menggantikan model yang diterapkan. Sisihkan data uji eksternal untuk klaim penelitian akhir.</div>
+    <section class="card" id="training-result">${state.report ? '<h3>Eksperimen Tersedia dalam Sesi Ini</h3><p>Buka evaluasi untuk memeriksa hasil pengujian pada data terpisah.</p><div class="actions"><a class="button" href="#evaluation">Evaluasi Model</a><button class="button secondary" id="export-report">Ekspor Hasil</button></div>' : "<h3>Inferensi Model Produksi</h3><p>Model produksi belum disertakan. Latih model secara lokal dengan dataset yang asal-usulnya telah diverifikasi, periksa hasilnya, lalu terapkan ulang artefaknya.</p><code>python -m ml.train_local /path/to/dataset.csv</code>"}</section>`;
 }
 export function mount(state, navigate) {
   const unbindFile = bindFile();
@@ -45,7 +45,7 @@ export function mount(state, navigate) {
     error.hidden = true;
     const status = document.querySelector("#training-progress");
     status.textContent =
-      "Fitting three models and evaluating held-out data. This may take up to 35 seconds…";
+      "Sedang melatih tiga model dan mengevaluasi data uji terpisah. Proses dapat berlangsung hingga 35 detik…";
     try {
       const dataset = datasetStore.get();
       const eligibility = trainingEligibility(dataset);

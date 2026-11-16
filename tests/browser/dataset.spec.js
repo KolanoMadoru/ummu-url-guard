@@ -22,42 +22,42 @@ test("25 MiB validation stays local, responds to navigation, masks previews, exp
   });
   await page.goto("/#dataset");
   await expect(
-    page.getByRole("button", { name: "Validate dataset" }),
+    page.getByRole("button", { name: "Validasi Dataset" }),
   ).toBeDisabled();
   await page.locator("#dataset-file").setInputFiles(fixture(25 * 1048576));
   await expect(page.locator("#selected-file")).toContainText("25.00 MiB");
-  await page.getByRole("button", { name: "Validate dataset" }).click();
-  await nav(page, "Model Training").click();
+  await page.getByRole("button", { name: "Validasi Dataset" }).click();
+  await nav(page, "Pelatihan Model").click();
   await expect(page.locator("#dataset-readiness")).toContainText(
     "large-research.csv",
   );
-  await nav(page, "Dataset Management").click();
-  await expect(page.locator("#dataset-status")).toHaveText("Validated", {
+  await nav(page, "Manajemen Dataset").click();
+  await expect(page.locator("#dataset-status")).toHaveText("Validasi Berhasil", {
     timeout: 45000,
   });
   await expect(page.locator("#dataset-percent")).toHaveText("100%");
   await expect(page.locator("#dataset-progress-text")).toContainText(
-    "51,200 records",
+    "51.200 data",
   );
   await expect(page.locator("#dataset-result")).not.toContainText(
     "token=private",
   );
   expect(await page.locator("#preview-rows tbody tr").count()).toBe(10);
-  await page.getByRole("button", { name: "Next preview page" }).click();
-  await expect(page.locator("#preview-page")).toContainText("Page 2 of 5");
+  await page.getByRole("button", { name: "Halaman Pratinjau Selanjutnya" }).click();
+  await expect(page.locator("#preview-page")).toContainText("Halaman 2 dari 5");
   const pending = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Download Summary" }).click();
+  await page.getByRole("button", { name: "Unduh Ringkasan" }).click();
   expect((await pending).suggestedFilename()).toBe("dataset-summary.json");
-  await page.getByRole("link", { name: "Continue to Model Training" }).click();
+  await page.getByRole("link", { name: "Lanjut ke Pelatihan Model" }).click();
   await expect(page.locator("#dataset-readiness")).toContainText(
-    "Large Dataset — Local Training Required",
+    "Dataset Besar — Pelatihan Lokal Diperlukan",
   );
   await expect(
-    page.getByRole("button", { name: "Start Training & Compare Models" }),
+    page.getByRole("button", { name: "Mulai Pelatihan & Bandingkan Model" }),
   ).toBeDisabled();
-  await nav(page, "Feature Experiment").click();
+  await nav(page, "Eksperimen Fitur").click();
   await expect(
-    page.getByRole("button", { name: "Run A / B experiment" }),
+    page.getByRole("button", { name: "Jalankan Eksperimen A / B" }),
   ).toBeDisabled();
   await expect(page.locator("#selected-file")).toContainText(
     "large-research.csv",
@@ -68,7 +68,7 @@ test("25 MiB validation stays local, responds to navigation, masks previews, exp
   );
   await page.reload();
   await expect(page.locator("#selected-file")).toContainText(
-    "Select the file again after a refresh",
+    "Pilih ulang file setelah memuat ulang halaman",
   );
   expect(errors).toEqual([]);
 });
@@ -78,16 +78,16 @@ test("cancel, reset, drag/drop and reselection work without stale worker results
 }) => {
   await page.goto("/#dataset");
   await page.locator("#dataset-file").setInputFiles(fixture(25 * 1048576));
-  await page.getByRole("button", { name: "Validate dataset" }).click();
-  await page.getByRole("button", { name: "Cancel Processing" }).click();
+  await page.getByRole("button", { name: "Validasi Dataset" }).click();
+  await page.getByRole("button", { name: "Batalkan Pemrosesan" }).click();
   await expect(page.locator("#dataset-status")).toHaveText(
-    "Processing Cancelled",
+    "Pemrosesan Dibatalkan",
   );
   await expect(
-    page.getByRole("button", { name: "Download Summary" }),
+    page.getByRole("button", { name: "Unduh Ringkasan" }),
   ).toBeDisabled();
-  await page.getByRole("button", { name: "Reset Dataset" }).click();
-  await expect(page.locator("#dataset-status")).toHaveText("No File Selected");
+  await page.getByRole("button", { name: "Atur Ulang Dataset" }).click();
+  await expect(page.locator("#dataset-status")).toHaveText("Belum Ada File Terpilih");
   const data = await page.evaluateHandle(() => {
     const transfer = new DataTransfer();
     transfer.items.add(
@@ -101,14 +101,14 @@ test("cancel, reset, drag/drop and reselection work without stale worker results
     .locator("#dataset-drop")
     .dispatchEvent("drop", { dataTransfer: data });
   await expect(page.locator("#selected-file")).toContainText("dropped.csv");
-  await page.getByRole("button", { name: "Validate dataset" }).click();
-  await expect(page.locator("#dataset-status")).toHaveText("Validated");
+  await page.getByRole("button", { name: "Validasi Dataset" }).click();
+  await expect(page.locator("#dataset-status")).toHaveText("Validasi Berhasil");
   await page.locator("#dataset-file").setInputFiles(fixture(3 * 1048576));
-  await expect(page.locator("#dataset-status")).toHaveText("File Selected");
-  await page.getByRole("button", { name: "Validate dataset" }).click();
-  await expect(page.locator("#dataset-status")).toHaveText("Validated");
+  await expect(page.locator("#dataset-status")).toHaveText("File Terpilih");
+  await page.getByRole("button", { name: "Validasi Dataset" }).click();
+  await expect(page.locator("#dataset-status")).toHaveText("Validasi Berhasil");
   await expect(page.locator("#dataset-progress-text")).toContainText(
-    "6,144 records",
+    "6.144 data",
   );
   await page.setViewportSize({ width: 390, height: 844 });
   await expect
@@ -136,13 +136,13 @@ test("Python verification handles provider plaintext 413 without a JSON parsing 
       mimeType: "text/csv",
       buffer: Buffer.from("url,label\nhttps://example.com,0"),
     });
-  await page.getByRole("button", { name: "Validate dataset" }).click();
-  await expect(page.locator("#dataset-status")).toHaveText("Validated");
+  await page.getByRole("button", { name: "Validasi Dataset" }).click();
+  await expect(page.locator("#dataset-status")).toHaveText("Validasi Berhasil");
   await page
-    .getByRole("button", { name: "Verify small dataset with Python" })
+    .getByRole("button", { name: "Verifikasi Dataset Kecil dengan Python" })
     .click();
   await expect(page.locator("#dataset-error")).toContainText(
-    "Ukuran request melebihi batas server",
+    "Ukuran permintaan melebihi batas server",
   );
   await expect(page.locator("#dataset-error")).not.toContainText(
     "Unexpected token",

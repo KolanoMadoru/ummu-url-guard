@@ -1,3 +1,4 @@
+import { displayText } from "../utils/i18n.js";
 import { datasetStore, trainingEligibility } from "../utils/dataset-state.js";
 import { formatBytes } from "../utils/dataset-config.js";
 import { escape, table } from "../utils/ui.js";
@@ -11,27 +12,27 @@ export function bindDatasetReadiness(button) {
     button.disabled = running || !eligibility.eligible;
     const input = document.querySelector("#dataset-file");
     if (input) input.disabled = running;
-    target.innerHTML = `<strong>${escape(data.status === "Validated" ? "Dataset Ready" : data.status)}</strong><p>${escape(eligibility.reason)}</p>
+    target.innerHTML = `<strong>${escape(displayText(data.status === "Validated" ? "Dataset Ready" : data.status))}</strong><p>${escape(displayText(eligibility.reason))}</p>
       ${
         data.file
           ? table(
-              ["Dataset", "Value"],
+              ["Dataset", "Nilai"],
               [
-                ["Name", data.name],
-                ["Size", formatBytes(data.size)],
-                ["Validation source", data.summary?.source || "Not validated"],
-                ["Valid records", data.summary?.valid_records ?? "N/A"],
-                ["Benign", data.summary?.class_distribution.benign ?? "N/A"],
+                ["Nama", data.name],
+                ["Ukuran", formatBytes(data.size)],
+                ["Sumber Validasi", displayText(data.summary?.source || "Not validated")],
+                ["Data Valid", data.summary?.valid_records ?? "Tidak Tersedia"],
+                ["Aman (benign)", data.summary?.class_distribution.benign ?? "Tidak Tersedia"],
                 [
                   "Phishing",
-                  data.summary?.class_distribution.phishing ?? "N/A",
+                  data.summary?.class_distribution.phishing ?? "Tidak Tersedia",
                 ],
               ],
             )
           : ""
       }
-      <div class="actions"><a class="button secondary" href="#dataset">Open Dataset Management</a>${data.summary ? '<button id="dataset-config-export" class="button secondary">Export local training configuration</button>' : ""}</div>
-      <p>Online training remains limited to the full original file: 2 MiB / 1,000 source rows plus domain-split checks. No subsets are selected automatically. For larger files:</p><code>python -m ml.train_local /path/to/dataset.csv</code><p>Run this command locally with the original CSV. This browser does not train the large dataset or combine chunk metrics.</p>`;
+      <div class="actions"><a class="button secondary" href="#dataset">Buka Manajemen Dataset</a>${data.summary ? '<button id="dataset-config-export" class="button secondary">Ekspor Konfigurasi Pelatihan Lokal</button>' : ""}</div>
+      <p>Pelatihan daring menggunakan file asli lengkap: maksimal 2 MiB / 1.000 baris sumber, disertai pemeriksaan pembagian domain. Tidak ada bagian data yang dipilih otomatis. Untuk file lebih besar:</p><code>python -m ml.train_local /path/to/dataset.csv</code><p>Jalankan perintah ini secara lokal menggunakan CSV asli. Browser tidak melatih dataset besar atau menggabungkan metrik per potongan.</p>`;
     document
       .querySelector("#dataset-config-export")
       ?.addEventListener("click", () =>

@@ -3,7 +3,7 @@ const active = [];
 export function clearCharts() {
   active.splice(0).forEach((chart) => chart.destroy());
 }
-export function chart(id, type, labels, values, label = "Records") {
+export function chart(id, type, labels, values, label = "Jumlah Data") {
   const canvas = document.getElementById(id);
   if (!canvas) return;
   active.push(
@@ -66,7 +66,7 @@ export function curve(id, data, label) {
             max: 1,
             title: {
               display: true,
-              text: label === "ROC" ? "False positive rate" : "Recall",
+              text: label === "ROC" ? "Tingkat positif palsu" : "Recall",
             },
           },
           y: {
@@ -74,7 +74,7 @@ export function curve(id, data, label) {
             max: 1,
             title: {
               display: true,
-              text: label === "ROC" ? "True positive rate" : "Precision",
+              text: label === "ROC" ? "Tingkat positif benar" : "Presisi",
             },
           },
         },
