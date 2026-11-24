@@ -3,14 +3,17 @@ import { heading, empty, table, escape, percent } from "../utils/ui.js";
 import { comparison } from "./evaluation.js";
 import { download, csv } from "../utils/storage.js";
 import { chart, plot } from "../utils/charts.js";
+import { currentResearchReport } from "../utils/research-reports.js";
+import { mountResearchAnalysis, renderResearchAnalysis } from "../components/research-workspace.js";
 export function render(state) {
   const r = state.report;
+  const research = currentResearchReport();
   if (!r)
     return (
       heading(
         "Analisis Hasil",
         "Tafsirkan bukti, pola kesalahan, dan metadata untuk reproduksi hasil.",
-      ) + empty()
+      ) + (research ? renderResearchAnalysis(research) : empty())
     );
   const rf = r.results.find(
     (x) => x.model_name === "Random Forest" && x.feature_set === "extended",
@@ -51,9 +54,11 @@ export function render(state) {
         ["Waktu Evaluasi", r.evaluation_timestamp],
         ["Metode Pembagian", displayText(r.split_method)],
       ],
-    )}<ul>${r.notes.map((note) => `<li>${escape(displayText(note))}</li>`).join("")}</ul></section>`;
+    )}<ul>${r.notes.map((note) => `<li>${escape(displayText(note))}</li>`).join("")}</ul></section>
+    ${renderResearchAnalysis(research)}`;
 }
 export function mount(state) {
+  mountResearchAnalysis(currentResearchReport());
   const r = state.report;
   if (!r) return;
   const rf = r.results.find(

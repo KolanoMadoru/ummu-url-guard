@@ -9,6 +9,11 @@ import {
   formatBytes,
 } from "../utils/dataset-config.js";
 import { chart, clearCharts, plot } from "../utils/charts.js";
+import {
+  distribution,
+  mountResearchImport,
+  renderResearchImport,
+} from "../components/research-workspace.js";
 
 export function render() {
   return `${heading("Manajemen Dataset", "Validasi file CSV di browser tanpa mengunggah file besar ke Vercel.")}
@@ -20,9 +25,11 @@ export function render() {
     <section class="card" aria-label="Progres Pemrosesan"><div class="section-heading"><h3 id="dataset-status" role="status">Belum Ada File Terpilih</h3><span id="dataset-percent">0%</span></div><progress id="dataset-progress" value="0" max="100" aria-label="Progres validasi dataset"></progress><p id="dataset-progress-text" class="hint"></p></section>
     <div id="dataset-result"></div>
     <section class="card"><div class="actions"><button id="summary-download" class="button secondary" disabled>Unduh Ringkasan</button><button id="validation-download" class="button secondary" disabled>Ekspor Laporan Validasi</button><button id="python-verify" class="button secondary" disabled>Verifikasi Dataset Kecil dengan Python</button><a id="continue-training" class="button secondary" href="#training" aria-disabled="true">Lanjut ke Pelatihan Model</a></div><p id="dataset-eligibility" role="status"></p><p id="python-status" role="status" class="hint"></p></section>
-    <div class="notice">Dataset besar divalidasi langsung di browser. Pelatihan daring mengikuti batas sumber daya backend. Validasi bukan pelatihan model. Hanya verifikasi Python atau pelatihan daring yang mengunggah file kecil (maksimal 2 MiB / 1.000 baris); file besar tetap di memori browser. Pilih ulang file setelah memuat ulang halaman.</div>`;
+    <div class="notice">CSV sederhana dan master dapat diperiksa langsung di browser. Gunakan pipeline lokal untuk audit split dan pelatihan master atau dataset besar. Verifikasi dan pelatihan daring menggunakan CSV sederhana hingga 2 MiB / 1.000 baris. Pilih ulang CSV setelah memuat ulang halaman.</div>
+    ${renderResearchImport()}`;
 }
 export function mount() {
+  const disposeResearch = mountResearchImport();
   const input = document.querySelector("#dataset-file");
   const drop = document.querySelector("#dataset-drop");
   const output = document.querySelector("#dataset-result");
@@ -136,7 +143,7 @@ export function mount() {
     const eligibility = trainingEligibility(data);
     document.querySelector("#dataset-eligibility").textContent =
       data.status === "Validated"
-        ? `Dataset Siap · ${data.summary.valid_records.toLocaleString("id-ID")} data valid. ${displayText(eligibility.reason)}`
+        ? `${data.summary.hasResearchMetadata ? "CSV Terbaca" : "Dataset Siap"} · ${data.summary.valid_records.toLocaleString("id-ID")} data valid. ${displayText(eligibility.reason)}`
         : "Validasi dataset terpilih sebelum melanjutkan.";
     continueLink.setAttribute(
       "aria-disabled",
@@ -146,6 +153,8 @@ export function mount() {
       running ||
       Boolean(verification) ||
       !data.summary?.valid ||
+      data.summary.hasResearchMetadata ||
+      data.summary.urls_over_online_limit > 0 ||
       data.size > ONLINE_LIMITS.maxFileBytes ||
       data.summary.total_records > ONLINE_LIMITS.maxRows;
     document.querySelector("#python-status").textContent = data.backend
@@ -160,6 +169,7 @@ export function mount() {
         return;
       }
       const s = data.summary;
+      const metadata = s.metadata_validation;
       output.innerHTML = `<section class="card"><h3>Ringkasan Validasi</h3><p>Sumber: browser · ${escape(displayText(s.validation_status))}. ${escape(displayText(s.counting))}</p>${table(
         ["Ukuran", "Nilai"],
         [
@@ -175,6 +185,7 @@ export function mount() {
           ["URL Kosong", s.missing_urls],
           ["Label Kosong", s.missing_labels],
           ["URL Tidak Valid", s.invalid_urls],
+          ["URL di Atas Batas Daring", s.urls_over_online_limit],
           ["Label Tidak Valid", s.invalid_labels],
           ["Data Duplikat", s.duplicate_records],
           ["Label Bertentangan (URL)", s.conflicting_labels],
@@ -183,7 +194,16 @@ export function mount() {
           ["Baris Kosong yang Diabaikan", s.blank_rows_ignored],
           ["SHA-256", s.dataset_hash],
         ],
-      )}</section><div class="grid two">${plot("dataset-classes", "Distribusi Kelas Data Valid")}<section class="card"><h3>Masalah Validasi · 100 Pertama</h3>${table(
+      )}</section>${s.hasResearchMetadata ? `<section class="card"><h3>Metadata CSV yang Terbaca</h3>
+        <p class="hint">${metadata.records_read.toLocaleString("id-ID")} baris sesuai struktur CSV. Lakukan audit kelompok dan split lintas berkas dengan pipeline lokal.</p>
+        ${table(["Pemeriksaan", "Jumlah Baris"], [
+          ["Konflik antara split dan split_final", metadata.split_conflict_records],
+          ["Nilai split tidak valid", metadata.invalid_split_records],
+          ["Konflik kategori dan label", metadata.category_label_conflict_records],
+        ])}
+        ${distribution("Split Tercatat", metadata.split_distribution)}
+        ${distribution("Kategori Tercatat", metadata.category_distribution)}
+        </section>` : ""}<div class="grid two">${plot("dataset-classes", "Distribusi Kelas Data Valid")}<section class="card"><h3>Masalah Validasi · 100 Pertama</h3>${table(
         ["Nomor Data CSV (judul kolom = 1)", "Masalah"],
         s.errors.map((e) => [e.row, displayText(e.message)]),
       )}${s.errors_truncated ? "<p>Masalah lainnya tidak ditampilkan karena batas laporan.</p>" : ""}</section></div>
@@ -227,6 +247,7 @@ export function mount() {
       const current = datasetStore.get();
       verify.disabled =
         !current.summary?.valid ||
+        current.summary.hasResearchMetadata ||
         current.size > ONLINE_LIMITS.maxFileBytes ||
         current.summary.total_records > ONLINE_LIMITS.maxRows;
     }
@@ -237,6 +258,7 @@ export function mount() {
       backend_validation: datasetStore.get().backend,
     });
   return () => {
+    disposeResearch();
     unsubscribe();
     verification?.abort();
   };

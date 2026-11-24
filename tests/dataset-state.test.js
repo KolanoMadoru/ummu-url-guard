@@ -75,3 +75,14 @@ test("large browser-validated datasets never become eligible for online training
     false,
   );
 });
+test("research metadata is routed to local audit even within online limits", () => {
+  const result = trainingEligibility({
+    file: { size: 8192 },
+    status: "Validated",
+    summary: { ...summary, hasResearchMetadata: true },
+  });
+  assert.deepEqual(result, {
+    eligible: false,
+    reason: "Research metadata requires the local audited pipeline.",
+  });
+});

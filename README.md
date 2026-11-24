@@ -9,7 +9,7 @@ Phishing URL Detection & Typosquatting Analysis — a Vite/vanilla JavaScript re
 - HEAD-only online metadata checks with public-address validation, pinned numeric connections, verified TLS/SNI, per-redirect validation, bounded headers, timeouts and concurrency. No page execution, body downloads or GET fallback.
 - CSV validation, masked previews, deduplication and conflicting-label rejection.
 - Real Random Forest, scaled Logistic Regression and Decision Tree training, validation-only selection, held-out metrics, curves, confusion matrices, feature importance and masked error analysis.
-- Basic/extended comparisons sharing identical domain-disjoint splits; JSON, CSV and research-summary exports.
+- A local research pipeline for audited master files and predefined splits, with six experiments, scenario-level evaluation, and JSON/CSV exports.
 - Bounded, masked localStorage history with search, filter, individual deletion and exports; compact experiment metric summaries.
 
 **No production model or research dataset is bundled.** Predictions correctly remain unavailable until you train and deploy a trusted artifact. Synthetic fixtures in tests verify software behavior only; their scores are not research findings. Shorteners, look-alike domains and benign predictions never establish website safety.
@@ -29,7 +29,7 @@ python -m uvicorn api.index:app --host 127.0.0.1 --port 8000 --no-access-log
 
 In a second terminal, run `npm run dev`. Vite proxies `/api` to Python on port 8000. Open the address printed by Vite. `/api/health` reports API and deployed-model availability; `/api/docs` documents the endpoints. On cloud machines with a read-only home directory, use `npm ci --cache /workspace/.npm-cache`.
 
-No database, API key, or cloud storage is required. Optional configuration is documented in `.env.example`: export variables in the shell or configure them in your hosting provider; the Python backend does not automatically load `.env`. Exact CORS origins are opt-in; same-origin deployment needs none. Set `ONLINE_SCAN_ENABLED=0` to disable outbound checks.
+No database, API key, cloud storage, or environment variables are required. Optional configuration is documented in `.env.example`. Export variables in the shell or configure them in your hosting provider. Exact CORS origins are opt-in through `ALLOWED_ORIGINS`. The scanner uses lexical analysis by default. Set `ONLINE_SCAN_ENABLED=1` only for deployments where optional outbound HEAD checks are needed.
 
 The current cloud machine can run the app and experiments but does not resolve arbitrary outbound scanner targets. It returns an honest online-check-unavailable result while retaining lexical analysis. This does not establish live-network scanning readiness on a deployed host.
 
@@ -51,6 +51,8 @@ Only the first 50 masked preview records and first 100 issue events are retained
 
 Default resource limits are **25 MiB**, **1,000,000 records**, **250,000 unique normalized URLs**, and **256 KiB per logical record**. Reading uses 256 KiB chunks. `.env.example` documents build-time `VITE_DATASET_MAX_MIB`, `VITE_DATASET_MAX_ROWS`, and `VITE_DATASET_MAX_UNIQUE_URLS` overrides (hard ceilings 100 MiB / 2 million records / 500,000 unique URLs). Files within the size limit may still exceed a row/unique-record budget; the error directs you to local processing. Changes require rebuilding Vite. Browser memory and speed vary by device.
 
+Browser review and the local research pipeline accept original and normalized URLs up to 16,384 characters. Datasets with URLs above the online limit of 4,096 characters remain eligible for local processing.
+
 Large files are never posted to Vercel. For small valid files, **Verify small dataset with Python** explicitly uploads to `/api/dataset/analyze`, with a visible notice. The API helper rejects source files over 2 MiB before serialization and checks the actual serialized multipart byte size (2 MiB + 64 KiB maximum); it preserves the multipart boundary's case. HTTP status and Content-Type are checked before JSON parsing. Provider plaintext/HTML 413/422/429/5xx errors, malformed JSON, network failures, cancellation and timeouts are shown as useful errors, never as successful results or raw HTML.
 
 Model Training and Feature Experiment share the selected File and validation metadata. The selected full dataset must be valid and within the existing Python upload/row budgets to enable online training; Python still checks domain groups and class splits. A larger validated file shows **Large Dataset — Local Training Required**, disables online training and offers local instructions/configuration export. No sampling, chunk-wise training or combined chunk metrics occur. Experiment results remain tied to their own metadata even if another file is later selected.
@@ -59,24 +61,42 @@ The old page uploaded the whole file into the 2 MiB / 1,000-row Python endpoint 
 
 Validated locally: exact-size 500 KiB, 1, 2, 2.1, 3, 5, 10, 15, 20 and 25 MiB fixtures; 100, 1,000, 1,001, 5,000, 10,000, 50,000 and 100,000 records; chunk-invariant aggregation, invalid encoding, malformed CSV, conflicts, cancellation, limits and API error handling. Chromium exercises a 25 MiB file, 3 MiB reselection, navigation, cancel/reset, drag/drop, masking, pagination, download, refresh, plaintext 413 and the existing small-data training flow. These are synthetic test fixtures, not model research findings.
 
-For larger datasets or a permanent inference model:
+### Jalankan pipeline penelitian
+
+Pratinjau dan validasi struktur CSV tersedia di **Manajemen Dataset**. Untuk dataset penelitian, jalankan audit dan pelatihan pada komputer lokal atau Colab dengan Python 3.12 dan dependensi dari `requirements-dev.txt`. Proses ini bekerja dari berkas privat dan tidak mengirim dataset ke Vercel. Dataset utama dua kolom tidak membawa metadata skenario atau split asli.
 
 ```sh
 . .venv/bin/activate
-python -m ml.train_local /absolute/path/to/labeled.csv
+python -m ml.research_pipeline /path/02_UPLOAD_EKSPERIMEN_METADATA.csv --audit-only
+python -m ml.research_pipeline /path/01_MASTER_EKSPERIMEN_METADATA.csv --dataset-version audit-18722
 ```
 
-This writes `models/production.joblib`, `models/model_metadata.json`, and `models/experiment.json` from actual training. The deployed classifier is explicitly the **extended Random Forest**, even if a baseline wins the validation comparison. Inspect the report before using it. No untrusted pickle/joblib upload endpoint exists.
+Jika master menyertakan split, pipeline mempertahankannya. Untuk memverifikasi ketiga berkas terhadap master, berikan semuanya sekaligus. Mode ZIP membaca empat berkas dengan nama baku dan mengabaikan berkas skenario, karantina, cadangan, dan laporan yang sudah ada.
 
-To include a verified model in deployment, deliberately add the locally generated artifact (`git add -f models/production.joblib`) and its metadata, then commit and redeploy. Artifacts are ignored by default to avoid accidental model uploads. Restart Python after replacing artifacts. Inference verifies SHA-256, schema, feature order and scikit-learn version before deserializing the fixed deployment-owned path. A checksum detects accidental changes; trust still comes from controlling the artifact and its metadata. Never load downloaded or user-supplied joblib files.
+```sh
+python -m ml.research_pipeline /path/01_MASTER_EKSPERIMEN_METADATA.csv \
+  --train /path/TRAIN.csv --validation /path/VALIDATION.csv --test /path/TEST.csv \
+  --dataset-version audit-18722
+python -m ml.research_pipeline /path/UMMU_PAKET_AUDIT_AKHIR_18722.zip --dataset-version audit-18722
+```
+
+Jalankan dengan `--audit-only` untuk memeriksa berkas sebelum pelatihan. Periksa `audit.json` dan `validation-issues.csv` untuk jumlah, alasan dan nomor record. Kesalahan audit menghentikan pipeline sebelum fitting. Bila data memiliki split kosong seluruhnya, pipeline membuat split berbasis kelompok. Bila split hanya terisi di sebagian baris atau berbeda antara master dan berkas split, perbaiki sumber data sebelum menjalankan ulang. Jumlah baris mengikuti input dan hasil audit.
+
+Setiap eksekusi membuat folder privat terpisah di `.research-runs/` (atau direktori dari `--output`). Folder berisi status, laporan audit dan, setelah sukses, subfolder `results/` dengan laporan lengkap, CSV metrik, dua ekspor fitur ber-ID baris, dan artefak model setiap konfigurasi. Jika pelatihan terhenti, jalankan ulang perintah yang sama untuk memakai kembali cache fitur yang sesuai. Proses berikutnya memakai ID eksperimen baru sehingga laporan lama tetap tersedia.
+
+Impor `results/research-summary.json` melalui **Manajemen Dataset** untuk melihat ringkasan di dashboard dan halaman hasil, termasuk setelah refresh. Browser menyimpan agregat dan metrik di perangkat. CSV penelitian, matriks fitur, prediksi per baris, serta artefak model tetap berada di penyimpanan privat yang Anda kendalikan. Simpan cadangan privat bila menggunakan lingkungan sementara seperti Colab. Penyimpanan cloud privat opsional dan dikelola sendiri, sehingga alur ini tidak memerlukan akun penyimpanan, layanan berbayar, atau variabel baru. Unggah hanya ringkasan agregat ke UI.
+
+Jika ingin mengaktifkan inferensi, tinjau terlebih dahulu laporan dan salin pasangan tepercaya `results/deployment-model/production.joblib` dan `model_metadata.json` ke `models/` dalam sumber deployment privat. Paket tersebut berisi **Random Forest 19 fitur (E2)**. Artefak bertahan saat cold start karena ikut dalam paket deployment. Restart API setelah penggantian lokal. Inference verifies SHA-256, schema, feature order and scikit-learn version before deserializing the fixed deployment-owned path. A checksum detects accidental changes. Load only artifacts you produced and control. For legacy two-column training, `python -m ml.train_local` remains available.
 
 ### Research protocol
 
-Features have a fixed ordered schema (`lexical-v1`) in `ml/features.py`. References, suspicious keywords and known shorteners are explicit constants, independent of dataset labels. Freeze them before evaluation; changing them requires retraining and versioning the feature schema.
+Features have a fixed ordered schema (`lexical-v2`) in `ml/features.py`. The seven basic values are an ordered subset of the 19 extended values. The scanner and both training paths share the same extractor. References, shorteners and the public suffix list have recorded versions. Changes to feature semantics require retraining before inference. Metadata, labels and verified redirect destinations are excluded from feature input.
 
-Registered-domain groups include private public-suffix boundaries. GroupShuffleSplit targets **70/15/15 of domain groups**, so row proportions can differ. A deterministic seed search (starting at 42) requires both labels in each partition; the effective seed and actual row/class/group counts are recorded. No registered domain crosses partitions. More complex related-domain relationships, campaigns and temporal leakage require a researcher-defined dataset and additional independent validation.
+The research path audits URL duplicates, normalized variants, recorded domain groups and known links from original or destination metadata without fetching URLs. See `audit.json` for rule-level coverage, the PSL version and documented limitations. When the input has no split, GroupShuffleSplit targets **70/15/15 of audited groups**. The seed search starts at 42 and requires both labels in all three partitions. The effective seed and actual row/class/group counts are recorded. Historical redirect destinations can be unknown, and the audit cannot establish content, campaign or temporal independence.
 
-Scalers are fitted inside a training-only Logistic Regression pipeline. Configurations are fixed; selection uses validation F1. Each model/feature set evaluates the same test rows once. Phishing is positive (1). Reports include accuracy, precision, recall, F1, ROC-AUC, **average precision as PR-AUC**, ROC/PR curves, and confusion matrices in `[benign, phishing]` order. Undefined AUC is null/N/A. Precision/recall/F1 use zero for zero denominators.
+The audit conservatively groups the registered domain of a shared shortener as well as known destination and paired URLs. Groups computed with the offline PSL private section can be further joined by explicit domain or group metadata. If the source audit used different hosting or shortener rules, review the reported rows and the original rule before using an existing split.
+
+Scalers are fitted inside a training-only Logistic Regression pipeline. Configurations are fixed and selection uses validation F1 before the test comparison. E1/E2 are Random Forest, E3/E4 Decision Tree, and E5/E6 Logistic Regression, with basic and extended features respectively. Every configuration evaluates the same test rows. Phishing is positive (1). Reports include accuracy, precision, recall, F1, ROC-AUC, **average precision as PR-AUC**, ROC/PR curves, and confusion matrices in `[benign, phishing]` order. Research reports add specificity, false-positive and false-negative rates, timing, and scenario-specific metrics when the matching metadata exists.
 
 Repeated experiments expose the same holdout and can bias future decisions. Reserve an external, untouched test set for final research claims. Probabilities are explicitly **uncalibrated model estimates**. Similarity can flag legitimate domains; feature importance is associative and subject to impurity bias. Extended features may perform worse than basic features.
 
@@ -138,7 +158,7 @@ Vercel's Vite/static builder otherwise auto-installs root `requirements.txt` int
 
 `vercel.json` sets the frontend install command to `npm ci`, leaving Python installation to the Python builder. The function also excludes `.vercel_python_packages/**` (including leftovers from an older build cache) and frontend/test outputs. `ml/*.py` and `models/**` remain explicitly included; NumPy, Pandas, SciPy, scikit-learn and the other declared runtime dependencies remain managed by the Python builder. No ML functionality or model artifacts are removed. Node is pinned to `24.x` so new major releases are not selected automatically.
 
-Validated locally with `@vercel/python` 31.0.2, the builder used by Vercel CLI 65.15.0: the duplicate-directory case reproduced 502.41 MiB; the corrected Python 3.12 bundle was 188.96 MiB with that stale directory still present. The packaged API and model training also ran using a prewarmed runtime dependency cache. Vercel may optimize larger scientific dependencies into its managed runtime installation; a cold-start download could not be validated here because direct DNS is restricted. Final size depends on resolved wheels and any deployed model artifact; redeploy and check the live function.
+The local `@vercel/python` 33.0.0 builder selected SciPy wheels targeting newer glibc when the dependency was unpinned. It had to bundle SciPy in the function and exceeded its 225 MiB limit after optimization. SciPy 1.16.3 provides a compatible `manylinux_2_17` wheel for Python 3.12 on x86-64, so the builder can install it from the package registry at runtime. With the pin, the local Python bundle stayed below the limit and excluded a probe in a stale `.vercel_python_packages` directory. A hosted preview still needs to verify cold-start dependency installation, request duration, and bundle size with any deployed model artifact.
 
 ## Project map
 

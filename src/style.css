@@ -361,6 +361,16 @@ p {
 .card p {
   margin-top: 0;
 }
+.research-import details {
+  margin-bottom: 20px;
+}
+.research-import details li {
+  margin-bottom: 12px;
+}
+.research-import input,
+.research-import select {
+  max-width: 100%;
+}
 .grid {
   display: grid;
   gap: 20px;

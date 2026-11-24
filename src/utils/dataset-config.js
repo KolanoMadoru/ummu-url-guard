@@ -13,12 +13,14 @@ export const DATASET_LIMITS = Object.freeze({
     bounded(env.VITE_DATASET_MAX_UNIQUE_URLS, 250000, 500000),
   ),
   maxRecordBytes: 256 * 1024,
+  maxURLLength: 16_384,
   chunkBytes: 256 * 1024,
   previewRows: 50,
 });
 export const ONLINE_LIMITS = Object.freeze({
   maxFileBytes: 2 * 1024 * 1024,
   maxRows: 1000,
+  maxURLLength: 4096,
   minUniqueRows: 30,
 });
 export const formatBytes = (bytes) => `${(bytes / 1024 / 1024).toFixed(2)} MiB`;

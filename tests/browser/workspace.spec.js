@@ -31,7 +31,7 @@ test("research workflow, private history, charts and mobile navigation", async (
     .getByLabel("URL", { exact: true })
     .fill("https://gooogle.com/login?token=private");
   await page.getByRole("button", { name: "Ekstraksi Fitur" }).click();
-  await expect(page.getByText("Skema: lexical-v1")).toBeVisible();
+  await expect(page.getByText("Skema: lexical-v2")).toBeVisible();
   await nav("Pemindai URL").click();
   await page
     .getByLabel("Masukkan URL")

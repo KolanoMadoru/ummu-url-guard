@@ -11,6 +11,8 @@ import {
 import { curve, plot, chart } from "../utils/charts.js";
 import { download } from "../utils/storage.js";
 import { api } from "../utils/api.js";
+import { currentResearchReport } from "../utils/research-reports.js";
+import { mountResearchEvaluation, renderResearchEvaluation } from "../components/research-workspace.js";
 export const metricKeys = [
   "accuracy",
   "precision",
@@ -42,6 +44,7 @@ export function comparison(report) {
 }
 export function render(state) {
   const report = state.report;
+  const research = currentResearchReport();
   const rf = report?.results.find(
     (r) => r.model_name === "Random Forest" && r.feature_set === "extended",
   );
@@ -64,11 +67,13 @@ export function render(state) {
               part.class_distribution.phishing,
             ]),
           )}<p class="hint">Validasi digunakan untuk memilih model; metrik data uji bukan target penyetelan. PR-AUC dilaporkan sebagai rerata presisi.</p></section>`
-        : empty()
+        : research ? "" : empty()
     }
+    ${renderResearchEvaluation(research)}
     <section class="card"><h3>Evaluasi Prediksi pada Data Uji Independen</h3><p>Unggah JSON berisi larik <code>actual</code>, <code>predicted</code> (0=benign, 1=phishing), dan <code>phishing_scores</code>. Metrik dihitung ulang; asal-usul dataset tetap harus diverifikasi.</p><label class="file-picker" for="evaluation-file">Pilih File Prediksi JSON<input class="visually-hidden" id="evaluation-file" type="file" accept=".json,application/json" /><span class="file-select" aria-hidden="true">Pilih File</span></label><p id="evaluation-selected" class="hint" role="status">Belum ada file terpilih.</p><button class="button secondary" id="evaluate-upload">Evaluasi Prediksi</button><p class="error" id="evaluation-error" role="alert" hidden></p><div id="independent-metrics"></div></section>`;
 }
 export function mount(state) {
+  mountResearchEvaluation(currentResearchReport());
   document.querySelector("#evaluation-file").onchange = (event) => {
     document.querySelector("#evaluation-selected").textContent = event.target.files[0]?.name || "Belum ada file terpilih.";
   };

@@ -24,6 +24,25 @@ SEED = 42
 RF_CONFIG = {"n_estimators": 80, "max_depth": 16, "min_samples_split": 4, "min_samples_leaf": 2, "class_weight": "balanced", "random_state": SEED, "n_jobs": 1}
 
 
+def model_candidates():
+    """Create independent estimators with the same configuration for each feature set."""
+    return {
+        "Random Forest": RandomForestClassifier(**RF_CONFIG),
+        "Logistic Regression": make_pipeline(
+            StandardScaler(),
+            LogisticRegression(max_iter=1500, class_weight="balanced", random_state=SEED),
+        ),
+        "Decision Tree": DecisionTreeClassifier(
+            max_depth=16, min_samples_leaf=2, class_weight="balanced", random_state=SEED
+        ),
+    }
+
+
+def production_bundle(model, version):
+    return {"model": model, "schema_version": SCHEMA_VERSION, "feature_names": list(FEATURE_NAMES),
+            "version": version, "sklearn_version": sklearn.__version__}
+
+
 def split_dataset(df, seed=SEED):
     """Target 70/15/15 of groups, not rows. Require both classes per partition."""
     if len(df) < 30 or df["group"].nunique() < 10:
@@ -54,11 +73,7 @@ def run_experiment(df, summary, dataset_name="uploaded.csv", feature_sets=("exte
         names = BASIC_FEATURES if feature_set == "basic" else FEATURE_NAMES
         columns = [FEATURE_NAMES.index(k) for k in names]
         x = matrix[:, columns]
-        candidates = {
-            "Random Forest": RandomForestClassifier(**RF_CONFIG),
-            "Logistic Regression": make_pipeline(StandardScaler(), LogisticRegression(max_iter=1500, class_weight="balanced", random_state=SEED)),
-            "Decision Tree": DecisionTreeClassifier(max_depth=16, min_samples_leaf=2, class_weight="balanced", random_state=SEED),
-        }
+        candidates = model_candidates()
         validation = {}
         for name, model in candidates.items():
             if time.monotonic() - began > timeout:
@@ -79,8 +94,7 @@ def run_experiment(df, summary, dataset_name="uploaded.csv", feature_sets=("exte
                             "validation_metrics": validation[name], "selected_on_validation": name == selected,
                             "feature_importance": importance, "errors": errors, "test_count": len(test)})
         if feature_set == "extended":
-            production = {"model": candidates["Random Forest"], "schema_version": SCHEMA_VERSION,
-                          "feature_names": list(FEATURE_NAMES), "version": experiment_id, "sklearn_version": sklearn.__version__}
+            production = production_bundle(candidates["Random Forest"], experiment_id)
     partitions = {name: {"rows": len(idx), "groups": int(df.iloc[idx]["group"].nunique()),
                          "class_distribution": {"benign": int(sum(y[idx] == 0)), "phishing": int(sum(y[idx] == 1))}}
                   for name, idx in (("train", train), ("validation", val), ("test", test))}

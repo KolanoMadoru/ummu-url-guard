@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { analyzeCSV, normalizeDatasetURL } from "../src/utils/csv-parser.js";
 import { DATASET_LIMITS } from "../src/utils/dataset-config.js";
+import { trainingEligibility } from "../src/utils/dataset-state.js";
 import { csvOfSize } from "./fixtures/datasets.js";
 const file = (text) => new File([text], "research.csv");
 
@@ -76,6 +77,64 @@ test("LF, no terminal newline, labels, blanks and invalid rows have explicit cou
   assert.equal(result.invalid_labels, 1);
   assert.equal(result.invalid_urls, 1);
   assert.equal(result.blank_rows_ignored, 1);
+  assert.equal(result.errors[0].row, 3);
+  assert.equal(result.hasResearchMetadata, false);
+});
+test("long HTTP URLs remain valid in browser review and require local training", async () => {
+  const input = file(`URL,LABEL\nhttps://example.test/${"a".repeat(5000)}?keep=1,0\n`);
+  const summary = await analyzeCSV(input);
+  assert.equal(summary.valid, true);
+  assert.equal(summary.urls_over_online_limit, 1);
+  assert.equal(trainingEligibility({ file: input, status: "Validated", summary }).eligible, false);
+  assert.throws(() => normalizeDatasetURL(`https://example.test/${"a".repeat(DATASET_LIMITS.maxURLLength)}`));
+});
+test("audits metadata fields locally without keeping metadata values", async () => {
+  const source = [
+    "url,label,split,split_final,kategori_audit,url_asli_pasangan,note",
+    'https://one.test/,0.00,train,Latih,biasa_0,https://private.test/path,"arbitrary metadata, retained only in the source file"',
+    "https://two.test/,1.0,validation,test,pendek_1,,",
+    "https://three.test/,1,invalid,,merek_0,,",
+    "https://four.test/,0,,uji,,,,",
+    "https://five.test/,1,,test,merek_1,,",
+    "https://six.test/,1,,test,<img>,,",
+  ].join("\n");
+  const summary = await analyzeCSV(file(source), { chunkBytes: 17 });
+  assert.equal(summary.hasResearchMetadata, true);
+  assert.equal(summary.valid_records, 3);
+  assert.equal(summary.invalid_records, 3);
+  assert.equal(summary.csv_error_records, 1);
+  assert.deepEqual(summary.metadata_validation, {
+    records_read: 5,
+    split_conflict_records: 1,
+    invalid_split_records: 1,
+    category_label_conflict_records: 1,
+    split_distribution: { train: 1, validation: 0, test: 2, unknown: 2 },
+    category_distribution: { biasa_0: 1, biasa_1: 0, pendek_0: 0, pendek_1: 1, merek_0: 1, merek_1: 1, unknown: 1 },
+  });
+  assert.match(summary.errors[0].message, /Conflicting split and split_final/u);
+  assert.match(summary.errors[1].message, /Category and label disagree/u);
+  assert.doesNotMatch(JSON.stringify(summary), /private\.test|<img>|arbitrary metadata/u);
+});
+test("streams an 8 MiB master CSV with 53 columns and reports scenario counts", async () => {
+  const columns = ["url", "label", "split", "split_final", "kategori_audit", "note"];
+  const spareColumns = Array.from({ length: 47 }, (_, i) => `unused_${i}`);
+  const header = [...columns, ...spareColumns].join(",") + "\n";
+  const rows = 20000;
+  const bytes = 8 * 1048576;
+  const prefixes = Array.from({ length: rows }, (_, i) =>
+    `https://group-${i}.test/,${i % 2},test,testing,biasa_${i % 2},`);
+  const suffix = ",".repeat(spareColumns.length) + "\n";
+  const padding = bytes - header.length - rows * suffix.length -
+    prefixes.reduce((total, prefix) => total + prefix.length, 0);
+  const parts = prefixes.map((prefix, i) =>
+    prefix + "x".repeat(Math.floor(padding / rows) + (i < padding % rows ? 1 : 0)) + suffix);
+  const master = new File([header, ...parts], "master.csv");
+  assert.equal(master.size, bytes);
+  const summary = await analyzeCSV(master);
+  assert.equal(summary.valid, true);
+  assert.equal(summary.valid_records, rows);
+  assert.equal(summary.metadata_validation.split_distribution.test, rows);
+  assert.equal(summary.metadata_validation.category_distribution.biasa_0, rows / 2);
 });
 test("empty, missing/duplicate headers, invalid encoding, oversized files and resource limits", async () => {
   for (const data of [

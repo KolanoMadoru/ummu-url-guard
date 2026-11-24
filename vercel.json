@@ -6,7 +6,7 @@
     "api/index.py": {
       "maxDuration": 60,
       "includeFiles": "{ml/*.py,models/**}",
-      "excludeFiles": "{.vercel_python_packages/**,src/**,public/**,tests/**,dist/**,scripts/**,playwright-report/**,test-results/**}"
+      "excludeFiles": "{.vercel_python_packages/**,.research-runs/**,.venv/**,node_modules/**,src/**,public/**,tests/**,dist/**,scripts/**,playwright-report/**,test-results/**}"
     }
   },
   "rewrites": [

@@ -12,6 +12,16 @@ export function trainingEligibility(dataset) {
       reason:
         "Validate the selected dataset successfully in Dataset Management first.",
     };
+  if (dataset.summary.hasResearchMetadata)
+    return {
+      eligible: false,
+      reason: "Research metadata requires the local audited pipeline.",
+    };
+  if (dataset.summary.urls_over_online_limit)
+    return {
+      eligible: false,
+      reason: "Dataset memuat URL yang melebihi batas panjang daring. Gunakan pipeline penelitian lokal.",
+    };
   if (
     dataset.file.size > ONLINE_LIMITS.maxFileBytes ||
     dataset.summary.total_records > ONLINE_LIMITS.maxRows
