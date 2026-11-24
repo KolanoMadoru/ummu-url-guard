@@ -49,6 +49,9 @@ export function saveScan(result) {
       : null,
     prediction: result.prediction,
     probability: result.probability,
+    prediction_source: ["initial", "destination"].includes(result.prediction_source)
+      ? result.prediction_source
+      : null,
     online_status: result.online?.status,
     redirects: result.online?.redirect_count ?? 0,
     timestamp: result.timestamp,
