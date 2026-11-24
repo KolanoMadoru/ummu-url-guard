@@ -54,7 +54,12 @@ const seconds = (value) => Number.isFinite(value) && value >= 0 ? value : null;
 const rate = (value) => Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
 const token = (value) => typeof value === "string" && /^[a-z0-9][a-z0-9_.+-]{0,79}$/i.test(value) ? value : null;
 const reportName = (value) => /^[\p{L}\p{N}][\p{L}\p{N} ._+&()\[\]-]{0,79}$/u.test(value);
+const csvFilename = (value) =>
+  typeof value === "string" && /^[\p{L}\p{N} ._+&()\[\]-]{1,146}\.csv$/iu.test(value) ? value : null;
 const own = (source, key) => source && Object.hasOwn(source, key) ? source[key] : undefined;
+const preprocessingKeys = [
+  "source_rows", "valid_rows", "invalid_rows", "duplicate_rows", "conflicting_rows", "blank_rows",
+];
 
 function safeCounts(value, knownKeys) {
   const keys = knownKeys ?? Object.keys(value ?? {}).filter(reportName).slice(0, 100);
@@ -90,6 +95,8 @@ function safeResult(result) {
     train_seconds: seconds(result.train_seconds),
     prediction_seconds: seconds(result.prediction_seconds),
     metrics: safeMetrics(result.metrics),
+    validation_metrics: result.validation_metrics ? safeMetrics(result.validation_metrics) : null,
+    error_counts: safeCounts(result.error_counts, ["false_positive", "false_negative"]),
     scenarios: Object.fromEntries(Object.keys(scenarios).flatMap((key) =>
       own(result.scenarios, key) ? [[key, safeMetrics(result.scenarios[key])]] : [])),
     shortener_scenarios: Object.fromEntries(
@@ -124,7 +131,10 @@ export function parseResearchReport(report) {
     schema: RESEARCH_SCHEMA,
     experiment_id: report.experiment_id,
     dataset_hash: report.dataset_hash.toLowerCase(),
+    dataset_name: csvFilename(report.dataset_name),
     dataset_version: token(report.dataset_version),
+    preprocessing: safeCounts(report.preprocessing, preprocessingKeys),
+    scenario_kind: report.scenario_kind === "heuristic" ? "heuristic" : null,
     feature_schema: token(report.feature_schema),
     brand_reference_version: token(report.brand_reference_version),
     shortener_registry_version: token(report.shortener_registry_version),

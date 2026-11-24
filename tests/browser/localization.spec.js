@@ -65,24 +65,25 @@ test("existing history keeps internal labels and export schema while displaying 
   await expect(page.locator("#history-table")).toContainText("Belum ada riwayat yang sesuai.");
 });
 
-test("CSV issues are translated only in the UI, retaining original download fields and values", async ({ page }) => {
+test("CSV problems are reported in Indonesian and excluded rows are downloadable", async ({ page }) => {
   await page.goto("/#dataset");
   await page.locator("#dataset-file").setInputFiles({
-    name: "invalid.csv", mimeType: "text/csv",
-    buffer: Buffer.from("url,label\nhttps://example.com,0\nhttps://example.com,1\nhttps://other.com,unknown\n,1"),
+    name: "synthetic-invalid.csv", mimeType: "text/csv",
+    buffer: Buffer.from("url,label\nhttps://first.example,0\nhttps://first.example,1\nhttps://other.example,unknown\n,1\nhttps://valid.example,0"),
   });
-  await page.getByRole("button", { name: "Validasi Dataset", exact: true }).click();
-  await expect(page.locator("#dataset-status")).toHaveText("Validasi Gagal");
-  await expect(page.locator("#dataset-result")).toContainText("Label bertentangan");
-  await expect(page.locator("#dataset-result")).toContainText("Label tidak valid; gunakan benign=0 atau phishing=1");
-  await expect(page.locator("#dataset-result")).toContainText("URL kosong");
-  await expect(page.locator("#dataset-result")).not.toContainText(/Conflicting labels|Invalid label|Missing URL|Valid records exclude/);
+  await page.getByText("Jalankan per Tahap", { exact: true }).click();
+  await page.getByRole("button", { name: "Proses Dataset", exact: true }).click();
+  const output = page.locator("#dataset-result");
+  await expect(output).toContainText("Baris dengan Konflik Label");
+  await expect(output).toContainText(/Label.*0.*1/i);
+  await expect(output).toContainText("URL kosong");
+  await expect(output).not.toContainText(/Conflicting labels|Invalid label|Missing URL/);
   const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Unduh Ringkasan" }).click();
-  const summary = JSON.parse(await readFile(await (await download).path(), "utf8"));
-  expect(summary.validation_status).toBe("Validation Failed");
-  expect(summary.preview[0].label).toBe("benign");
-  expect(summary.errors.some((e) => e.message === "Missing URL")).toBe(true);
+  await page.getByRole("button", { name: "Unduh Laporan Data yang Tidak Digunakan" }).click();
+  const contents = await readFile(await (await download).path(), "utf8");
+  expect(contents.split("\r\n")).toHaveLength(5);
+  expect(contents).toContain('"conflict"');
+  expect(contents).not.toContain("https://");
 });
 
 test("API field errors, network failures and invalid JSON use Indonesian diagnostic messages", async ({ page }) => {
@@ -99,6 +100,7 @@ test("API field errors, network failures and invalid JSON use Indonesian diagnos
   await page.getByRole("button", { name: "Ekstraksi Fitur", exact: true }).click();
   await expect(page.locator("#feature-error")).toHaveText("Terjadi Kesalahan Jaringan. Periksa koneksi dan ketersediaan backend.");
   await page.goto("/#evaluation");
+  await page.getByText("Evaluasi Prediksi pada Data Uji Independen", { exact: true }).click();
   await page.locator("#evaluation-file").setInputFiles({ name: "broken.json", mimeType: "application/json", buffer: Buffer.from("{broken") });
   await page.getByRole("button", { name: "Evaluasi Prediksi", exact: true }).click();
   await expect(page.locator("#evaluation-error")).toHaveText("JSON tidak valid. Periksa sintaks file prediksi.");

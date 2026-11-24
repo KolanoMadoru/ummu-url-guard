@@ -1,150 +1,75 @@
 import { test, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { csvOfSize } from "../fixtures/datasets.js";
 
-const fixture = (bytes) => ({
-  name: "large-research.csv",
-  mimeType: "text/csv",
-  buffer: Buffer.from(csvOfSize(bytes).join("")),
-});
+const suiteStatus = (page) => page.locator("[data-research-status]");
+const action = (page, name) => page.getByRole("button", { name, exact: true });
 const nav = (page, name) =>
   page.getByRole("navigation").getByRole("link", { name, exact: true });
 
-test("25 MiB validation stays local, responds to navigation, masks previews, exports and gates full-dataset training", async ({
-  page,
-}) => {
-  test.setTimeout(90000);
-  const errors = [],
-    uploads = [];
-  page.on("pageerror", (e) => errors.push(e.message));
+test("one CSV over 2 MiB uses feature batches and lets the user process individual stages", async ({ page }) => {
+  const posts = [];
   page.on("request", (request) => {
-    if (/\/api\/(train|experiment|dataset\/analyze)/u.test(request.url()))
-      uploads.push(request);
+    if (request.method() === "POST") posts.push(request.url());
   });
   await page.goto("/#dataset");
-  await expect(
-    page.getByRole("button", { name: "Validasi Dataset" }),
-  ).toBeDisabled();
-  await page.locator("#dataset-file").setInputFiles(fixture(25 * 1048576));
-  await expect(page.locator("#selected-file")).toContainText("25.00 MiB");
-  await page.getByRole("button", { name: "Validasi Dataset" }).click();
+  await expect(action(page, "Jalankan Penelitian Otomatis")).toBeDisabled();
+  const buffer = Buffer.from(csvOfSize(3 * 1024 * 1024, 2800).join("")
+    .replaceAll(",benign,", ",0     ,").replaceAll(",phishing,", ",1       ,"));
+  await page.locator("#dataset-file").setInputFiles({
+    name: "synthetic-large.csv", mimeType: "text/csv", buffer,
+  });
+  await expect(page.locator("#selected-file")).toContainText(/3[.,]00 MiB/);
+  await page.getByText("Jalankan per Tahap", { exact: true }).click();
+  await expect(action(page, "Audit dan Buat Split")).toBeDisabled();
+  await action(page, "Proses Dataset").click();
   await nav(page, "Pelatihan Model").click();
-  await expect(page.locator("#dataset-readiness")).toContainText(
-    "large-research.csv",
-  );
+  await expect(page.locator("#selected-file")).toContainText("synthetic-large.csv");
+  await expect(action(page, "Latih Enam Eksperimen")).toBeDisabled();
   await nav(page, "Manajemen Dataset").click();
-  await expect(page.locator("#dataset-status")).toHaveText("Validasi Berhasil", {
-    timeout: 45000,
-  });
-  await expect(page.locator("#dataset-percent")).toHaveText("100%");
-  await expect(page.locator("#dataset-progress-text")).toContainText(
-    "51.200 data",
-  );
-  await expect(page.locator("#dataset-result")).not.toContainText(
-    "token=private",
-  );
-  expect(await page.locator("#preview-rows tbody tr").count()).toBe(10);
-  await page.getByRole("button", { name: "Halaman Pratinjau Selanjutnya" }).click();
-  await expect(page.locator("#preview-page")).toContainText("Halaman 2 dari 5");
-  const pending = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Unduh Ringkasan" }).click();
-  expect((await pending).suggestedFilename()).toBe("dataset-summary.json");
-  await page.getByRole("link", { name: "Lanjut ke Pelatihan Model" }).click();
-  await expect(page.locator("#dataset-readiness")).toContainText(
-    "Dataset Besar — Pelatihan Lokal Diperlukan",
-  );
-  await expect(
-    page.getByRole("button", { name: "Mulai Pelatihan & Bandingkan Model" }),
-  ).toBeDisabled();
-  await nav(page, "Eksperimen Fitur").click();
-  await expect(
-    page.getByRole("button", { name: "Jalankan Eksperimen A / B" }),
-  ).toBeDisabled();
-  await expect(page.locator("#selected-file")).toContainText(
-    "large-research.csv",
-  );
-  expect(uploads).toEqual([]);
-  expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(
-    "large-research.csv",
-  );
+  await expect(page.getByRole("heading", { name: "Ringkasan Dataset" })).toBeVisible({ timeout: 45000 });
+  await expect(page.locator("#dataset-result")).not.toContainText("token=private");
+  await expect(page.locator("#preview-rows tbody tr")).toHaveCount(10);
+  await action(page, "Halaman Selanjutnya").click();
+  await expect(page.locator("#preview-page")).toHaveText("Halaman 2 dari 2");
+  await expect(action(page, "Halaman Selanjutnya")).toBeDisabled();
+  await page.getByText("Jalankan per Tahap", { exact: true }).click();
+  await action(page, "Audit dan Buat Split").click();
+  await expect(page.getByText("Tidak ditemukan kebocoran berdasarkan URL dan domain yang diperiksa.", { exact: true })).toBeVisible();
+  await action(page, "Ekstrak Fitur Dataset").click();
+  const filename = page.waitForEvent("download");
+  await action(page, "Unduh 7 Fitur Dasar").click();
+  const result = await filename;
+  expect(result.suggestedFilename()).toBe("fitur-dasar.csv");
+  const contents = await readFile(await result.path(), "utf8");
+  expect(contents.split("\r\n")).toHaveLength(2801);
+  expect(contents.split("\r\n", 1)[0].split(",")).toHaveLength(10);
+  expect(contents).not.toContain("https://");
+  expect(posts.filter((url) => url.includes("/api/research/features")).length).toBeGreaterThan(1);
+  expect(posts.every((url) => url.includes("/api/research/features"))).toBe(true);
   await page.reload();
-  await expect(page.locator("#selected-file")).toContainText(
-    "Pilih ulang file setelah memuat ulang halaman",
-  );
-  expect(errors).toEqual([]);
+  await expect(page.locator("#selected-file")).toContainText("synthetic-large.csv");
+  await expect(action(page, "Unduh 19 Fitur Lengkap")).toBeEnabled();
 });
 
-test("cancel, reset, drag/drop and reselection work without stale worker results", async ({
-  page,
-}) => {
+test("drag and drop with UTF-8 BOM accepts quoted URLs and ignores extra columns", async ({ page }) => {
   await page.goto("/#dataset");
-  await page.locator("#dataset-file").setInputFiles(fixture(25 * 1048576));
-  await page.getByRole("button", { name: "Validasi Dataset" }).click();
-  await page.getByRole("button", { name: "Batalkan Pemrosesan" }).click();
-  await expect(page.locator("#dataset-status")).toHaveText(
-    "Pemrosesan Dibatalkan",
-  );
-  await expect(
-    page.getByRole("button", { name: "Unduh Ringkasan" }),
-  ).toBeDisabled();
-  await page.getByRole("button", { name: "Atur Ulang Dataset" }).click();
-  await expect(page.locator("#dataset-status")).toHaveText("Belum Ada File Terpilih");
-  const data = await page.evaluateHandle(() => {
-    const transfer = new DataTransfer();
-    transfer.items.add(
-      new File(["url,label\nhttps://small.com,0"], "dropped.csv", {
-        type: "text/csv",
-      }),
-    );
-    return transfer;
+  await page.getByText("Jalankan per Tahap", { exact: true }).click();
+  const drop = await page.evaluateHandle(() => {
+    const data = new DataTransfer();
+    data.items.add(new File([
+      '\ufeffurl,label,split_final\r\n"https://sample.example/about?token=a,b",0,unrecognized\r\n',
+    ], "synthetic-dropped.csv", { type: "text/csv" }));
+    return data;
   });
-  await page
-    .locator("#dataset-drop")
-    .dispatchEvent("drop", { dataTransfer: data });
-  await expect(page.locator("#selected-file")).toContainText("dropped.csv");
-  await page.getByRole("button", { name: "Validasi Dataset" }).click();
-  await expect(page.locator("#dataset-status")).toHaveText("Validasi Berhasil");
-  await page.locator("#dataset-file").setInputFiles(fixture(3 * 1048576));
-  await expect(page.locator("#dataset-status")).toHaveText("File Terpilih");
-  await page.getByRole("button", { name: "Validasi Dataset" }).click();
-  await expect(page.locator("#dataset-status")).toHaveText("Validasi Berhasil");
-  await expect(page.locator("#dataset-progress-text")).toContainText(
-    "6.144 data",
-  );
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect
-    .poll(() =>
-      page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
-    )
-    .toBe(false);
-});
-
-test("Python verification handles provider plaintext 413 without a JSON parsing error", async ({
-  page,
-}) => {
-  await page.route("**/api/dataset/analyze", (route) =>
-    route.fulfill({
-      status: 413,
-      contentType: "text/plain",
-      body: "Request Entity Too Large",
-    }),
-  );
-  await page.goto("/#dataset");
-  await page
-    .locator("#dataset-file")
-    .setInputFiles({
-      name: "small.csv",
-      mimeType: "text/csv",
-      buffer: Buffer.from("url,label\nhttps://example.com,0"),
-    });
-  await page.getByRole("button", { name: "Validasi Dataset" }).click();
-  await expect(page.locator("#dataset-status")).toHaveText("Validasi Berhasil");
-  await page
-    .getByRole("button", { name: "Verifikasi Dataset Kecil dengan Python" })
-    .click();
-  await expect(page.locator("#dataset-error")).toContainText(
-    "Ukuran permintaan melebihi batas server",
-  );
-  await expect(page.locator("#dataset-error")).not.toContainText(
-    "Unexpected token",
-  );
+  await page.locator("#dataset-drop").dispatchEvent("drop", { dataTransfer: drop });
+  await expect(page.locator("#selected-file")).toContainText("synthetic-dropped.csv");
+  await action(page, "Proses Dataset").click();
+  await expect(suiteStatus(page)).toContainText("Tahap Berhasil");
+  await expect(page.getByRole("row", { name: "Data Valid untuk Eksperimen 1" })).toBeVisible();
+  await expect(page.locator("#preview-rows")).toContainText("Aman (benign)");
+  await expect(page.locator("#preview-rows")).not.toContainText("token");
+  await action(page, "Atur Ulang Dataset").click();
+  await expect(suiteStatus(page)).toHaveText("Belum Dimulai");
+  await expect(action(page, "Jalankan Penelitian Otomatis")).toBeDisabled();
 });

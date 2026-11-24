@@ -2,17 +2,23 @@
 
 Phishing URL Detection & Typosquatting Analysis — a Vite/vanilla JavaScript research workspace with a Python 3.12 FastAPI backend, scikit-learn models, and browser-local history.
 
-## What works
+## Alur penelitian di website
 
-- Nine responsive pages: dashboard, scanner, datasets, features, training, evaluation, feature experiments, analysis, and history.
-- Deterministic Python lexical extraction, offline public-suffix parsing, known-shortener recognition, and registered-domain edit similarity against an explicit, fixed reference list.
-- HEAD-only online metadata checks with public-address validation, pinned numeric connections, verified TLS/SNI, per-redirect validation, bounded headers, timeouts and concurrency. No page execution, body downloads or GET fallback.
-- CSV validation, masked previews, deduplication and conflicting-label rejection.
-- Real Random Forest, scaled Logistic Regression and Decision Tree training, validation-only selection, held-out metrics, curves, confusion matrices, feature importance and masked error analysis.
-- A local research pipeline for audited master files and predefined splits, with six experiments, scenario-level evaluation, and JSON/CSV exports.
-- Bounded, masked localStorage history with search, filter, individual deletion and exports; compact experiment metric summaries.
+1. Buka **Manajemen Dataset** dan pilih atau seret satu CSV UTF-8 (BOM didukung).
+   Gunakan kolom `url,label`, dengan `0` untuk benign dan `1` untuk phishing.
+2. Pilih **Jalankan Penelitian Otomatis**. Aplikasi membaca record, menghitung fitur secara leksikal per batch, membersihkan data, membuat split, mengaudit pemisahan, melatih E1–E6, lalu menampilkan evaluasi. Tombol per tahap memakai checkpoint yang sama.
+3. Buka **Evaluasi Model** atau **Analisis Hasil** untuk melihat hasil. Unduh laporan JSON lengkap, CSV metrik, split, fitur, dan alasan setiap record yang dikeluarkan.
+4. Buka **Pemindai URL** untuk menggunakan Random Forest 19 fitur (E2) dari penelitian yang selesai di browser ini.
 
-**No production model or research dataset is bundled.** Predictions correctly remain unavailable until you train and deploy a trusted artifact. Synthetic fixtures in tests verify software behavior only; their scores are not research findings. Shorteners, look-alike domains and benign predictions never establish website safety.
+```csv
+url,label
+"https://example.com/path?value=a,b",0
+https://example.org/,1
+```
+
+Contoh tersebut menunjukkan format CSV. Penelitian memerlukan kedua label pada setiap split, dengan sedikitnya tiga kelompok domain berbeda yang memuat masing-masing label. Kolom tambahan diabaikan. Pratinjau menampilkan maksimal 20 record dan menyamarkan URL. Distribusi, hasil evaluasi, dan status berasal dari data yang diproses.
+
+Dataset, model, dan hasil riset tidak disertakan. Label historis dan keluaran model tidak menjamin keamanan URL.
 
 ## Local development
 
@@ -33,74 +39,25 @@ No database, API key, cloud storage, or environment variables are required. Opti
 
 The current cloud machine can run the app and experiments but does not resolve arbitrary outbound scanner targets. It returns an honest online-check-unavailable result while retaining lexical analysis. This does not establish live-network scanning readiness on a deployed host.
 
-## Dataset and training
+## Batas dan penyimpanan
 
-Bring a UTF-8 CSV containing `url,label`. Labels are `phishing` / `benign` or `1` / `0`. Verify provenance, collection dates, label quality, consent and licensing yourself; do not use real credentials in URLs.
+- Alur website mendukung **50.000 record data per CSV**, maksimum **25 MiB** secara default, dan **256 KiB per record CSV**. URL asli dan representasi ternormalisasi masing-masing dibatasi 16.384 karakter. Batas ini membatasi sumber daya. Indikator seperti penggunaan IP, query panjang, domain pendek, dan banyak subdomain tetap diperbolehkan.
+- Web Worker membaca CSV bertahap dan menghitung SHA-256. Hanya URL dari record yang lolos pemeriksaan struktur dan label yang dikirim ke API ekstraksi asal yang sama. API menghitung fitur leksikal, tanpa membuka target. Setiap permintaan fitur dibatasi 2.500 URL dan 1,5 MB. Batch yang menghasilkan 413 dibelah dan dicoba kembali.
+- Web Worker menyimpan checkpoint dalam IndexedDB, termasuk split, fitur, laporan dan Random Forest E2. File mentah, path, query, serta token tautan tidak disimpan dalam checkpoint. Preview terbatas menyimpan origin yang disamarkan. Unduhan split dan fitur menggunakan nomor record CSV, sehingga bisa dirujuk kembali ke file asli.
+- Tahap yang selesai tersedia setelah refresh pada profil browser dan origin yang sama. Jika salah satu eksperimen gagal, retry melanjutkan dari konfigurasi tersimpan. Bila tahap pemrosesan awal terputus sebelum selesai, pilih kembali file untuk memulainya. Simpan unduhan sebagai cadangan sebelum menghapus data situs atau berganti perangkat. Memilih CSV baru mengganti workspace aktif dan melepas model browser sebelumnya. Ringkasan eksperimen terdahulu tetap dapat dilihat dari daftar laporan.
+- Interpreter Python melatih satu konfigurasi per request, tanpa menyimpan data riset atau model di server. Request training membawa matriks numerik 19 kolom Float32, satu byte label, split, dan indikator per record. Maksimum total 3.950.000 byte. JSON model E2 berisi struktur pohon numerik. Website tidak menerima unggahan pickle atau joblib.
 
-Online **training** limits (separate from browser validation): 2 MiB, 1,000 source rows, at least 30 unique normalized URLs, at least 10 registered-domain groups, and at least 6 rows per label. Both classes must be present in all three partitions. Missing cells, invalid URLs, invalid labels and identical-URL label conflicts reject the upload with a useful error. Identical normalized duplicates with consistent labels are removed. Data is held only for the request, not persisted on Vercel or in browser storage.
+Variabel opsional dijelaskan di `.env.example`. Tidak ada penyimpanan cloud, akun, atau service eksternal tambahan yang dibutuhkan untuk workflow situs. `VITE_DATASET_MAX_MIB` dan `VITE_DATASET_MAX_ROWS` dapat digunakan untuk membatasi beban. Mengubah batas konfigurasi tidak menaikkan batas training 50.000 record.
 
-### Browser validation up to 25 MiB
+## Metodologi
 
-Dataset Management validates CSV locally using a module Web Worker, Papa Parse's incremental parser, strict streaming UTF-8 decoding and incremental SHA-256. It does not call `file.text()` or load the complete file into an array. Progress comes from actual bytes read and records parsed. UTF-8 BOM, LF/CRLF, quoted commas, escaped quotes and multiline quoted fields are supported. Malformed CSV, invalid encoding and resource limits produce explicit failures.
+- **Preprocessing.** Baris kosong diabaikan. URL dipangkas dari spasi luar lalu divalidasi sebagai HTTP(S). Representasi asli dipakai untuk menghitung fitur. Normalisasi konservatif dipakai untuk deduplikasi. Untuk label yang konsisten, hanya kemunculan pertama dari URL ternormalisasi yang digunakan. Jika label bertentangan, setiap anggota grup duplikat dikarantina. Ekspor masalah mencatat alasan dan nomor record tanpa menyalin URL.
+- **Audit dan split.** Registrable domain memakai snapshot Public Suffix List dari `tldextract`, termasuk private suffix, dan IP memakai representasi kanonik. Setiap grup mencakup domain yang sama dan variasi URL terkait, termasuk HTTP/HTTPS dan awalan www. Dengan seed 42, aplikasi mengalokasikan grup utuh ke target **70/15/15 baris** dan mengupayakan distribusi label serta tautan pendek yang representatif. Memecah grup besar seperti T.LY akan menghasilkan kebocoran, sehingga rasio aktual dapat menyimpang. Statistik split dan peringatan tercantum di UI/ekspor. Audit memeriksa bahwa URL ternormalisasi, hubungan URL, dan domain tidak melintasi partisi. Cakupan ini tidak menjelaskan tujuan redirect historis yang tidak tercatat, maupun kesamaan kampanye atau konten.
+- **Fitur.** Skema `lexical-v2` mempertahankan 7 fitur dasar sebagai subset dari 19 fitur lengkap. Training dan scanner memakai ekstraktor yang sama. Katalog pemendek dan referensi merek dicatat versinya. Damerau–Levenshtein menghitung penambahan, penghapusan, penggantian, dan pertukaran huruf. Label, split, kolom tambahan, dan status audit tidak masuk ke matriks fitur.
+- **Eksperimen.** E1/E2 memakai Random Forest, E3/E4 Decision Tree, dan E5/E6 Logistic Regression, masing-masing dengan 7/19 fitur. Parameter tetap sebelum eksperimen. Fitting, termasuk scaler, hanya memakai training. Aplikasi membandingkan konfigurasi berdasarkan F1 validation. Metrik test dihitung dari prediksi dan skor kelas phishing (1) pada partisi test yang sama untuk semua konfigurasi. Model browser adalah E2 sesuai rancangan penelitian. Skor belum dikalibrasi dan tingkat kepentingan fitur pohon berasal dari impuritas.
+- **Evaluasi.** Hasil global adalah hasil utama. Subset test tambahan berasal dari heuristik URL. URL biasa berarti tidak teridentifikasi sebagai tautan pendek. Indikasi kemiripan merek dapat tumpang tindih dengan kedua kelompok. Aplikasi menampilkan jumlah per kelas, confusion matrix [benign, phishing], metrik yang tersedia, dan waktu eksekusi. ROC-AUC membutuhkan kedua kelas. PR-AUC menggunakan average precision. JSON ekspor menyimpan hash, versi, parameter, pembagian, dan prediksi per record agar metrik dapat diperiksa ulang.
 
-Select or drag and drop a CSV, then choose **Validate dataset**. Cancel terminates the worker; Reset clears the File and summary. Navigation keeps the File reference and state in session memory, including in-progress validation. A refresh discards them and asks you to select the file again. Neither datasets nor File objects enter localStorage.
-
-The summary reports total/valid/invalid records, missing values, malformed rows, invalid URL/label counts, duplicates across all chunks, conflicting labels, class distribution, and an exact file hash. Valid class counts include consistent duplicate rows, which are separately counted; no rows are silently removed by the browser. Every otherwise valid record in a conflicting URL group is reclassified invalid. Python removes consistent normalized duplicates before training. Browser normalization uses HTTP(S) syntax, IDNA hostnames, default ports and percent encoding; Python independently revalidates the original file and can reject additional cases. Neither validation route proves a URL safe.
-
-Only the first 50 masked preview records and first 100 issue events are retained; preview pages render 10 records at a time. All displayed CSV strings are escaped. Preview and exports mask origins, removing URL paths, query parameters and fragments. The worker retains bounded SHA-256 URL keys for whole-file duplicate detection and releases its data on completion, error or cancellation. Download Summary includes the source (`browser`) and any separately requested Python result. Export Validation Report is bounded and protects spreadsheet formulas.
-
-Default resource limits are **25 MiB**, **1,000,000 records**, **250,000 unique normalized URLs**, and **256 KiB per logical record**. Reading uses 256 KiB chunks. `.env.example` documents build-time `VITE_DATASET_MAX_MIB`, `VITE_DATASET_MAX_ROWS`, and `VITE_DATASET_MAX_UNIQUE_URLS` overrides (hard ceilings 100 MiB / 2 million records / 500,000 unique URLs). Files within the size limit may still exceed a row/unique-record budget; the error directs you to local processing. Changes require rebuilding Vite. Browser memory and speed vary by device.
-
-Browser review and the local research pipeline accept original and normalized URLs up to 16,384 characters. Datasets with URLs above the online limit of 4,096 characters remain eligible for local processing.
-
-Large files are never posted to Vercel. For small valid files, **Verify small dataset with Python** explicitly uploads to `/api/dataset/analyze`, with a visible notice. The API helper rejects source files over 2 MiB before serialization and checks the actual serialized multipart byte size (2 MiB + 64 KiB maximum); it preserves the multipart boundary's case. HTTP status and Content-Type are checked before JSON parsing. Provider plaintext/HTML 413/422/429/5xx errors, malformed JSON, network failures, cancellation and timeouts are shown as useful errors, never as successful results or raw HTML.
-
-Model Training and Feature Experiment share the selected File and validation metadata. The selected full dataset must be valid and within the existing Python upload/row budgets to enable online training; Python still checks domain groups and class splits. A larger validated file shows **Large Dataset — Local Training Required**, disables online training and offers local instructions/configuration export. No sampling, chunk-wise training or combined chunk metrics occur. Experiment results remain tied to their own metadata even if another file is later selected.
-
-The old page uploaded the whole file into the 2 MiB / 1,000-row Python endpoint and called `response.json()` on any response, including provider errors. This explains the reported `Unexpected token 'R'` failure. The live deployment could not be inspected from this cloud environment (its hostname is blocked by the network proxy); no live-deployment fix is claimed before merging and redeploying.
-
-Validated locally: exact-size 500 KiB, 1, 2, 2.1, 3, 5, 10, 15, 20 and 25 MiB fixtures; 100, 1,000, 1,001, 5,000, 10,000, 50,000 and 100,000 records; chunk-invariant aggregation, invalid encoding, malformed CSV, conflicts, cancellation, limits and API error handling. Chromium exercises a 25 MiB file, 3 MiB reselection, navigation, cancel/reset, drag/drop, masking, pagination, download, refresh, plaintext 413 and the existing small-data training flow. These are synthetic test fixtures, not model research findings.
-
-### Jalankan pipeline penelitian
-
-Pratinjau dan validasi struktur CSV tersedia di **Manajemen Dataset**. Untuk dataset penelitian, jalankan audit dan pelatihan pada komputer lokal atau Colab dengan Python 3.12 dan dependensi dari `requirements-dev.txt`. Proses ini bekerja dari berkas privat dan tidak mengirim dataset ke Vercel. Dataset utama dua kolom tidak membawa metadata skenario atau split asli.
-
-```sh
-. .venv/bin/activate
-python -m ml.research_pipeline /path/02_UPLOAD_EKSPERIMEN_METADATA.csv --audit-only
-python -m ml.research_pipeline /path/01_MASTER_EKSPERIMEN_METADATA.csv --dataset-version audit-18722
-```
-
-Jika master menyertakan split, pipeline mempertahankannya. Untuk memverifikasi ketiga berkas terhadap master, berikan semuanya sekaligus. Mode ZIP membaca empat berkas dengan nama baku dan mengabaikan berkas skenario, karantina, cadangan, dan laporan yang sudah ada.
-
-```sh
-python -m ml.research_pipeline /path/01_MASTER_EKSPERIMEN_METADATA.csv \
-  --train /path/TRAIN.csv --validation /path/VALIDATION.csv --test /path/TEST.csv \
-  --dataset-version audit-18722
-python -m ml.research_pipeline /path/UMMU_PAKET_AUDIT_AKHIR_18722.zip --dataset-version audit-18722
-```
-
-Jalankan dengan `--audit-only` untuk memeriksa berkas sebelum pelatihan. Periksa `audit.json` dan `validation-issues.csv` untuk jumlah, alasan dan nomor record. Kesalahan audit menghentikan pipeline sebelum fitting. Bila data memiliki split kosong seluruhnya, pipeline membuat split berbasis kelompok. Bila split hanya terisi di sebagian baris atau berbeda antara master dan berkas split, perbaiki sumber data sebelum menjalankan ulang. Jumlah baris mengikuti input dan hasil audit.
-
-Setiap eksekusi membuat folder privat terpisah di `.research-runs/` (atau direktori dari `--output`). Folder berisi status, laporan audit dan, setelah sukses, subfolder `results/` dengan laporan lengkap, CSV metrik, dua ekspor fitur ber-ID baris, dan artefak model setiap konfigurasi. Jika pelatihan terhenti, jalankan ulang perintah yang sama untuk memakai kembali cache fitur yang sesuai. Proses berikutnya memakai ID eksperimen baru sehingga laporan lama tetap tersedia.
-
-Impor `results/research-summary.json` melalui **Manajemen Dataset** untuk melihat ringkasan di dashboard dan halaman hasil, termasuk setelah refresh. Browser menyimpan agregat dan metrik di perangkat. CSV penelitian, matriks fitur, prediksi per baris, serta artefak model tetap berada di penyimpanan privat yang Anda kendalikan. Simpan cadangan privat bila menggunakan lingkungan sementara seperti Colab. Penyimpanan cloud privat opsional dan dikelola sendiri, sehingga alur ini tidak memerlukan akun penyimpanan, layanan berbayar, atau variabel baru. Unggah hanya ringkasan agregat ke UI.
-
-Jika ingin mengaktifkan inferensi, tinjau terlebih dahulu laporan dan salin pasangan tepercaya `results/deployment-model/production.joblib` dan `model_metadata.json` ke `models/` dalam sumber deployment privat. Paket tersebut berisi **Random Forest 19 fitur (E2)**. Artefak bertahan saat cold start karena ikut dalam paket deployment. Restart API setelah penggantian lokal. Inference verifies SHA-256, schema, feature order and scikit-learn version before deserializing the fixed deployment-owned path. A checksum detects accidental changes. Load only artifacts you produced and control. For legacy two-column training, `python -m ml.train_local` remains available.
-
-### Research protocol
-
-Features have a fixed ordered schema (`lexical-v2`) in `ml/features.py`. The seven basic values are an ordered subset of the 19 extended values. The scanner and both training paths share the same extractor. References, shorteners and the public suffix list have recorded versions. Changes to feature semantics require retraining before inference. Metadata, labels and verified redirect destinations are excluded from feature input.
-
-The research path audits URL duplicates, normalized variants, recorded domain groups and known links from original or destination metadata without fetching URLs. See `audit.json` for rule-level coverage, the PSL version and documented limitations. When the input has no split, GroupShuffleSplit targets **70/15/15 of audited groups**. The seed search starts at 42 and requires both labels in all three partitions. The effective seed and actual row/class/group counts are recorded. Historical redirect destinations can be unknown, and the audit cannot establish content, campaign or temporal independence.
-
-The audit conservatively groups the registered domain of a shared shortener as well as known destination and paired URLs. Groups computed with the offline PSL private section can be further joined by explicit domain or group metadata. If the source audit used different hosting or shortener rules, review the reported rows and the original rule before using an existing split.
-
-Scalers are fitted inside a training-only Logistic Regression pipeline. Configurations are fixed and selection uses validation F1 before the test comparison. E1/E2 are Random Forest, E3/E4 Decision Tree, and E5/E6 Logistic Regression, with basic and extended features respectively. Every configuration evaluates the same test rows. Phishing is positive (1). Reports include accuracy, precision, recall, F1, ROC-AUC, **average precision as PR-AUC**, ROC/PR curves, and confusion matrices in `[benign, phishing]` order. Research reports add specificity, false-positive and false-negative rates, timing, and scenario-specific metrics when the matching metadata exists.
-
-Repeated experiments expose the same holdout and can bias future decisions. Reserve an external, untouched test set for final research claims. Probabilities are explicitly **uncalibrated model estimates**. Similarity can flag legitimate domains; feature importance is associative and subject to impurity bias. Extended features may perform worse than basic features.
-
-Online experiments never activate or replace the production model. Full reports stay in session memory and must be exported before reloading. Only ten compact metric summaries persist locally. `/api/evaluate` recomputes metrics from user-supplied held-out labels/predictions/scores; it does not certify their provenance. The evaluation page supports this JSON format.
+Laporan lama dalam format `research-summary.json` masih dapat diimpor secara opsional. Pipeline CLI dari rilis sebelumnya juga tetap dapat dipakai untuk audit master/split peneliti yang sudah ada. Untuk penggunaan normal, cukup unggah satu CSV ke website.
 
 ## API
 
@@ -110,6 +67,8 @@ Online experiments never activate or replace the production model. Full reports 
 | `POST /api/features` | JSON `{ "url": "https://example.com" }` | Ordered features, definitions, types, similarity |
 | `POST /api/predict` | URL JSON | Lexical features and deployed prediction, or explicit unavailable state |
 | `POST /api/scan` | URL JSON | Lexical prediction plus separate network metadata |
+| `POST /api/research/features` | JSON daftar URL terbatas | Fitur leksikal dan kunci pengelompokan dalam urutan input |
+| `POST /api/research/train/{E1…E6}` | Byte matriks, label, split, dan indikator | Satu hasil eksperimen. E2 menyertakan forest numerik. |
 | `POST /api/dataset/analyze` | Multipart field `file` | Validated counts, hash, masked preview |
 | `POST /api/train` | CSV upload | Three models on extended features |
 | `POST /api/experiment` | CSV upload | Six model/feature combinations on a common split |
@@ -119,7 +78,7 @@ Online experiments never activate or replace the production model. Full reports 
 
 Input permits HTTP(S) only, with no URL credentials, whitespace, control characters or backslashes; hostnames use IDNA normalization. The scanner permits only each scheme's default port, validates **every** DNS answer, rejects non-public IPs/internal names, then connects to a validated numeric IP without re-resolving. HTTPS uses the original hostname for SNI and certificate verification. Every redirect repeats the full checks. Mixed public/private DNS answers reject the target. At most five redirects, 32 KiB headers per response, five seconds per request and twelve seconds total are allowed. DNS and network concurrency are bounded. Unsupported HEAD returns unavailable; there is no GET fallback. Proxies are not used because connection pinning could not otherwise be established. A restricted environment may therefore disable online checking safely.
 
-Request bodies and CSV rows are bounded. Rate limits allow 30 requests per minute per client/process, and one training job/four scans per process. Forwarded headers are not trusted directly. **In-memory limits are not distributed protection:** before public launch, configure Vercel Firewall/WAF rate limits and authentication/access rules for training endpoints according to your plan and audience. Shared serverless client IPs can cause conservative throttling. Online training checks a 35-second budget between bounded fits; the provider remains responsible for the hard function timeout. Larger jobs belong in the local script.
+Request bodies and CSV rows are bounded. Rate limits per client and process are 100 feature-batch requests, 12 browser-training requests, and 30 other requests per minute. Each process handles one training request at a time. Forwarded headers are not trusted directly. For a public deployment, review Vercel Firewall and access rules for the intended audience. The provider enforces the function deadline.
 
 No user cookies, authorization headers or page scripts reach targets. Original URLs are transient API inputs/results rendered as escaped text. History and report errors retain **origin only**, removing paths as well as queries and fragments. Browser history is capped at 200 records. localStorage remains accessible to scripts on the same origin and is not encrypted or synced. CSV exports neutralize spreadsheet formulas. API access logging is disabled in documented startup commands; configure provider request logging and retention carefully. No sensitive URLs are logged by application code.
 
@@ -142,15 +101,15 @@ Validated in this cloud instance: lexical extraction, URL rejection and IDNA, re
 
 ## Vercel deployment
 
-1. Run validation and train/review a real model as above if inference is needed.
-2. Commit the project to GitHub, including the lockfile and any explicitly trusted model files.
+1. Run the validation commands.
+2. Push the source and lockfile to GitHub. Browser-trained models are saved by the app.
 3. Import the repository in Vercel with framework preset **Vite**, build command `npm run build`, output `dist`, and Python **3.12**. The repository pins Python in `.python-version`; verify the build log uses it.
 4. `vercel.json` routes `/api/*` to the FastAPI Python function, includes `ml/` and `models/`, sets a 60-second function maximum and security headers. Hash-based frontend navigation needs no catch-all rewrite and cannot shadow the API. Dependencies are installed from `requirements.txt`.
-5. Add optional environment configuration and configure public API abuse controls. Do not put credentials in frontend code. History uses browser localStorage; experiments use temporary request memory.
-6. Deploy. Verify function dependency/bundle size and duration against your plan. Python scientific packages are substantial; do not assume a successful Vite build proves Python bundling succeeds. No production database or durable serverless filesystem is required.
-7. On the real deployment, check `/api/health`, `/api/features`, a controlled public HEAD/redirect target, a blocked private target, CSV training and artifact-backed prediction. Verify the console and mobile navigation. If outbound connection safety cannot be established, the online check must stay unavailable.
+5. Create a preview deployment. Check Python build output, dependency download on cold start, and the 60-second function duration against the selected plan.
+6. Open the preview and run one complete research job with a synthetic CSV. Check `/api/health`, CSV upload, six fits, data restoration after refresh, scanner prediction, and download. Confirm behavior at 50.000 rows on the hosted plan before sharing a production URL.
+7. Promote a verified preview using the Vercel project workflow.
 
-**Vercel publication has not been performed in this cloud task:** no Vercel project or deployment credentials were supplied. Routing and configuration are provided, but an authenticated deployment and live smoke checks remain required. No claim of production deployment is made.
+Local validation used the official Vercel Python builder for a roughly 180.5 MiB bundle. Chromium ran all six configurations from a synthetic 50,000-row CSV (2.76 MB) against the packaged API with dependencies prewarmed, then recovered the E2 scanner model after refresh. Each binary training request was 3.95 MB. The separate 50,000-row E2 benchmark with high-entropy features took about 12 seconds and returned less than 0.7 MB. Hosted Vercel preview, cold start, and the original research dataset still require verification.
 
 ### Python function bundle size
 
@@ -162,9 +121,9 @@ The local `@vercel/python` 33.0.0 builder selected SciPy wheels targeting newer 
 
 ## Project map
 
-- `src/pages/`: nine working pages; `src/utils/`: API, shared dataset state/configuration, chunked CSV aggregation, charts, escaping, masked browser storage and exports. `src/workers/csv-worker.js` performs browser validation; `src/components/dataset-readiness.js` connects training to the selected dataset.
+- `src/pages/`: nine pages. `src/workers/automatic-research.js` runs the browser pipeline and checkpoints progress. `src/utils/automatic-data.js` validates records and builds deterministic partitions, and `src/utils/browser-prediction.js` reads numeric E2 trees.
 - `api/index.py`: FastAPI routes, request bounds, CORS, rate/concurrency guards.
-- `ml/features.py`, `scanner.py`, `dataset.py`, `model.py`, `evaluation.py`, `train_local.py`: shared Python logic and local training CLI.
+- `ml/features.py`, `scanner.py`, `dataset.py`, `model.py`, `evaluation.py`: shared Python logic. `ml/browser_training.py` fits one configuration per request. `ml/research_pipeline.py` remains available for local metadata audits.
 - `models/model_metadata.json`: honest untrained state; real artifacts are generated only from supplied data.
 - `tests/`: Python, JavaScript and browser integration tests; `.github/workflows/checks.yml`: CI.
 - `vite.config.js`, `vercel.json`: development proxy and deployment configuration.

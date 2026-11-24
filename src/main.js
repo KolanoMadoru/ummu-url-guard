@@ -74,7 +74,7 @@ const navigation = [
   ["analysis", "Analisis Hasil", "file-chart-column"],
   ["history", "Riwayat Deteksi", "history"],
 ];
-const state = { health: null, report: null };
+const state = { health: null };
 let cleanupPage;
 
 document.querySelector("#app").innerHTML =

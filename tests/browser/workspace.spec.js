@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { test, expect } from "@playwright/test";
 
 test("research workflow, private history, charts and mobile navigation", async ({
@@ -48,7 +49,7 @@ test("research workflow, private history, charts and mobile navigation", async (
   expect(history).not.toContain("private");
   expect(history).not.toContain("secret");
   await nav("Dasbor").click();
-  await expect(page.locator("#prediction-chart")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pemindai URL" })).toBeVisible();
   await nav("Riwayat Deteksi").click();
   await page.getByRole("searchbox").fill("not-present");
   await expect(page.getByText("Belum ada riwayat yang sesuai.")).toBeVisible();
@@ -59,40 +60,42 @@ test("research workflow, private history, charts and mobile navigation", async (
   await page.getByRole("button", { name: "Hapus", exact: true }).click();
   await expect(page.getByText("Belum ada riwayat yang sesuai.")).toBeVisible();
   await nav("Manajemen Dataset").click();
-  // Generated synthetic fixture is used only to test plumbing, never as research evidence.
-  let csv = "url,label\n";
-  for (let i = 0; i < 100; i++)
-    csv += `https://group${i}.com/${i % 4 === 0 ? "verify123" : "about"},${i % 4 === 0 ? "phishing" : "benign"}\n`;
-  await page
-    .locator("#dataset-file")
-    .setInputFiles({
-      name: "synthetic-test-only.csv",
-      mimeType: "text/csv",
-      buffer: Buffer.from(csv),
-    });
-  await page.getByRole("button", { name: "Validasi Dataset" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Ringkasan Validasi" }),
-  ).toBeVisible();
-  await nav("Pelatihan Model").click();
-  await page
-    .getByRole("button", { name: "Mulai Pelatihan & Bandingkan Model" })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "Perbandingan Model", exact: true }),
-  ).toBeVisible();
-  await expect(page.locator("canvas#roc")).toBeVisible();
-  await nav("Eksperimen Fitur").click();
-  await page.getByRole("button", { name: "Jalankan Eksperimen A / B" }).click();
-  await expect(
-    page.getByRole("heading", {
-      name: "Enam Model · Satu Partisi Uji yang Sama",
-    }),
-  ).toBeVisible();
+  // Generated synthetic URLs exercise software behavior only.
+  const rows = ["url,label"];
+  for (let i = 0; i < 100; i++) {
+    rows.push(`https://group${i}.example/about,0`);
+    rows.push(`https://login.group${i}.example/verify?name=private,1`);
+  }
+  rows.push("https://group0.example/about,0");
+  await page.locator("#dataset-file").setInputFiles({
+    name: "synthetic-test-only.csv", mimeType: "text/csv",
+    buffer: Buffer.from(rows.join("\n")),
+  });
+  const trainingRequests = [];
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith("/api/research/train/")) trainingRequests.push(path.split("/").pop());
+  });
+  await page.getByRole("button", { name: "Jalankan Penelitian Otomatis", exact: true }).click();
+  await expect(page.locator("[data-research-status]")).toContainText("Penelitian Selesai", { timeout: 45000 });
+  expect(trainingRequests).toEqual(["E1", "E2", "E3", "E4", "E5", "E6"]);
+  await expect(page.getByRole("row", { name: "Data Duplikat 1" })).toBeVisible();
+  const reportReady = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Unduh Laporan Penelitian", exact: true }).click();
+  const report = JSON.parse(await readFile(await (await reportReady).path(), "utf8"));
+  expect(report.rows).toBe(200);
+  expect(report.scenario_kind).toBe("heuristic");
+  expect(report.results).toHaveLength(6);
+  expect(report.experiments.every((model) => model.test_predictions.length === report.split.test.rows)).toBe(true);
+  expect(report.results.every((model) => model.metrics.confusion_matrix.flat().reduce((a, b) => a + b) === report.split.test.rows)).toBe(true);
+  await nav("Evaluasi Model").click();
+  await expect(page.getByRole("heading", { name: "Evaluasi Penelitian", exact: true })).toBeVisible();
+  await expect(page.getByText("Skor Pembanding pada Data Validasi")).toBeVisible();
+  await expect(page.getByText("Subset dibentuk dari ciri URL.", { exact: false })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Evaluasi Penelitian", exact: true })).toBeVisible();
   await nav("Analisis Hasil").click();
-  await expect(
-    page.getByRole("heading", { name: "Peringkat Fitur" }),
-  ).toBeVisible();
+  await expect(page.locator("#research-f1")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/#dashboard");
   expect(

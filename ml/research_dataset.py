@@ -7,12 +7,12 @@ import io
 import json
 from pathlib import Path
 import re
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 import pandas as pd
 
 from ml.dataset import normalize_label
-from ml.features import MAX_RESEARCH_URL_LENGTH, PSL_VERSION, normalize_url, registered_domain, shortener_provider
+from ml.features import MAX_RESEARCH_URL_LENGTH, PSL_VERSION, normalize_url, registered_domain, related_url_key, shortener_provider
 
 
 PARTITIONS = ("train", "validation", "test")
@@ -31,9 +31,7 @@ STATUS_FIELDS = ("keputusan_audit", "status_kategori_audit", "status_redirect_au
 AUDIT_FIELDS = (*DOMAIN_FIELDS, *URL_FIELDS, *AUDIT_KEY_FIELDS, *STATUS_FIELDS)
 OPTIONAL_FIELDS = ("split", "split_final", "kategori_audit", "scenario", "source", *AUDIT_FIELDS)
 EMPTY_METADATA = {"", "-", "n/a", "na", "null", "none", "unknown", "tidak diketahui"}
-ESCAPE = re.compile(r"%([0-9a-fA-F]{2})")
 INVALID_UTF8 = re.compile(r"[\udc80-\udcff]")
-UNRESERVED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
 
 class ResearchDatasetError(ValueError):
@@ -201,17 +199,6 @@ def _parse_row(raw, role, issues):
     }
 
 
-def _related_url(normalized_url):
-    def canonical_escape(match):
-        code = match[1].upper()
-        character = chr(int(code, 16))
-        return character if character in UNRESERVED else f"%{code}"
-
-    parts = urlsplit(normalized_url)
-    return urlunsplit(("", parts.netloc.removeprefix("www."), ESCAPE.sub(canonical_escape, parts.path),
-                       ESCAPE.sub(canonical_escape, parts.query), ""))
-
-
 def _merge_splits(rows, split_files, issues, hashes, counts):
     if set(split_files) != set(PARTITIONS):
         _issue(issues, "expected_all_three_split_files")
@@ -267,7 +254,7 @@ def _relation_keys(row, issues):
     normalized = row["normalized_url"]
     yield ("exact_url", row["url"])
     yield ("normalized_url", normalized)
-    yield ("related_url", _related_url(normalized))
+    yield ("related_url", related_url_key(normalized))
     yield ("domain", row["registered_domain"])
     for field in URL_FIELDS:
         if row[field]:
@@ -277,7 +264,7 @@ def _relation_keys(row, issues):
                 _issue(issues, f"invalid_{field}", row=row["row"], row_id=row["row_id"])
                 continue
             yield ("normalized_url", link)
-            yield ("related_url", _related_url(link))
+            yield ("related_url", related_url_key(link))
             yield ("domain", registered_domain(urlsplit(link).hostname))
     for field in DOMAIN_FIELDS:
         if row[field]:

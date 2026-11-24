@@ -1,265 +1,252 @@
-import { displayText, classLabel, errorText } from "../utils/i18n.js";
-import { api } from "../utils/api.js";
-import { heading, filePicker, table, escape } from "../utils/ui.js";
-import { download, csv } from "../utils/storage.js";
-import { datasetStore, trainingEligibility } from "../utils/dataset-state.js";
+import { automaticResearch } from "../utils/automatic-research.js";
+import { DATASET_LIMITS } from "../utils/dataset-config.js";
+import { classLabel, errorText } from "../utils/i18n.js";
+import { download } from "../utils/storage.js";
+import { escape, filePicker, heading, table } from "../utils/ui.js";
 import {
-  DATASET_LIMITS,
-  ONLINE_LIMITS,
-  formatBytes,
-} from "../utils/dataset-config.js";
-import { chart, clearCharts, plot } from "../utils/charts.js";
-import {
-  distribution,
-  mountResearchImport,
-  renderResearchImport,
-} from "../components/research-workspace.js";
+  canUseResearchFile, formatResearchCount as count, mountResearchControls,
+  renderResearchProgress, renderStageButtons, researchStages, selectResearchFile,
+  selectedResearchFile,
+} from "../components/automatic-research.js";
+import { distribution, mountResearchImport, renderResearchImport } from "../components/research-workspace.js";
 
 export function render() {
-  return `${heading("Manajemen Dataset", "Validasi file CSV di browser tanpa mengunggah file besar ke Vercel.")}
-    <section class="card"><h2>Unggah Dataset CSV</h2><p>Kolom: <code>url,label</code>. Label: <code>phishing = 1</code>, <code>benign = 0</code>. URL tidak pernah dibuka.</p>
-      <div id="dataset-drop" class="dataset-drop" tabindex="0" aria-label="Letakkan file CSV di sini">${filePicker()}<p>Seret dan letakkan CSV di sini, atau gunakan pemilih file.</p></div>
-      <p id="selected-file" class="hint"></p><div class="actions"><button id="analyze" class="button" disabled>Validasi Dataset</button><button id="dataset-cancel" class="button secondary" disabled>Batalkan Pemrosesan</button><button id="dataset-reset" class="button secondary">Atur Ulang Dataset</button></div>
-      <p id="dataset-error" class="error" role="alert" hidden></p>
+  return `${heading("Manajemen Dataset", "Unggah satu CSV berlabel dan jalankan penelitian dari validasi hingga evaluasi.")}
+    <section class="card" id="dataset-workflow">
+      <h2>Dataset Penelitian</h2>
+      <p>Gunakan kolom <code>url,label</code> dengan label <code>0</code> untuk benign dan <code>1</code> untuk phishing. Kolom tambahan diabaikan. Batas ${DATASET_LIMITS.maxFileBytes / 1048576} MiB dan 50.000 baris data.</p>
+      <div id="dataset-drop" class="dataset-drop" aria-label="Letakkan file CSV di sini">
+        ${filePicker()}<p>Seret satu CSV ke sini atau pilih file.</p>
+      </div>
+      <p id="selected-file" class="hint" data-research-selection></p>
+      <p class="hint">Aplikasi mengirim URL dalam kelompok kecil ke API untuk ekstraksi fitur leksikal. Situs tujuan tidak dibuka. Browser menyimpan fitur dan hasil penelitian tanpa URL mentah.</p>
+      <p class="error" id="dataset-selection-error" role="alert" hidden></p>
+      <div class="actions">
+        <button class="button" type="button" data-research-run="evaluate" data-research-automatic disabled>Jalankan Penelitian Otomatis</button>
+        <button class="button secondary" type="button" data-research-cancel disabled>Batalkan Pemrosesan</button>
+        <button id="dataset-reset" class="button secondary" type="button">Atur Ulang Dataset</button>
+      </div>
+      <details class="research-options">
+        <summary>Jalankan per Tahap</summary>
+        <div class="actions">${renderStageButtons(Object.keys(researchStages))}</div>
+      </details>
+      ${renderResearchProgress()}
     </section>
-    <section class="card" aria-label="Progres Pemrosesan"><div class="section-heading"><h3 id="dataset-status" role="status">Belum Ada File Terpilih</h3><span id="dataset-percent">0%</span></div><progress id="dataset-progress" value="0" max="100" aria-label="Progres validasi dataset"></progress><p id="dataset-progress-text" class="hint"></p></section>
     <div id="dataset-result"></div>
-    <section class="card"><div class="actions"><button id="summary-download" class="button secondary" disabled>Unduh Ringkasan</button><button id="validation-download" class="button secondary" disabled>Ekspor Laporan Validasi</button><button id="python-verify" class="button secondary" disabled>Verifikasi Dataset Kecil dengan Python</button><a id="continue-training" class="button secondary" href="#training" aria-disabled="true">Lanjut ke Pelatihan Model</a></div><p id="dataset-eligibility" role="status"></p><p id="python-status" role="status" class="hint"></p></section>
-    <div class="notice">CSV sederhana dan master dapat diperiksa langsung di browser. Gunakan pipeline lokal untuk audit split dan pelatihan master atau dataset besar. Verifikasi dan pelatihan daring menggunakan CSV sederhana hingga 2 MiB / 1.000 baris. Pilih ulang CSV setelah memuat ulang halaman.</div>
+    <section class="card" id="dataset-downloads" hidden>
+      <h3>Unduhan Penelitian</h3>
+      <div class="actions">
+        <button class="button secondary" type="button" data-research-export="issues" disabled>Unduh Laporan Data yang Tidak Digunakan</button>
+        <button class="button secondary" type="button" data-research-export="split" disabled>Unduh Pembagian Dataset</button>
+        <button class="button secondary" type="button" data-research-export="basic" disabled>Unduh 7 Fitur Dasar</button>
+        <button class="button secondary" type="button" data-research-export="extended" disabled>Unduh 19 Fitur Lengkap</button>
+        <button class="button" type="button" data-research-export="results" disabled>Unduh Laporan Penelitian</button>
+        <a class="button secondary" href="#evaluation" id="research-results-link" hidden>Lihat Evaluasi Penelitian</a>
+      </div>
+      <p id="research-download-error" class="error" role="alert" hidden></p>
+    </section>
     ${renderResearchImport()}`;
 }
+
+const splitLabels = {
+  train: ["Pelatihan", "Melatih model"],
+  validation: ["Validasi", "Membandingkan konfigurasi"],
+  test: ["Pengujian", "Mengukur performa akhir"],
+};
+
+function renderSummary(dataset) {
+  const issues = dataset.issues?.slice(0, 20) ?? [];
+  return `<section class="card">
+    <h3>Ringkasan Dataset</h3>
+    ${table(["Ukuran", "Nilai"], [
+      ["Total Data Awal", count(dataset.source_rows)],
+      ["Baris Kosong", count(dataset.blank_rows ?? dataset.blank_count)],
+      ["Data Valid untuk Eksperimen", count(dataset.valid_rows)],
+      ["Data Tidak Valid", count(dataset.invalid_rows)],
+      ["Data Duplikat", count(dataset.duplicate_rows)],
+      ["Baris dengan Konflik Label", count(dataset.conflicting_rows)],
+      ["Benign", count(dataset.benign)],
+      ["Phishing", count(dataset.phishing)],
+      ["Tautan Pendek Teridentifikasi", count(Object.values(dataset.shorteners ?? {}).reduce((sum, n) => sum + n, 0))],
+      ["Indikasi Kemiripan Merek", count(dataset.brand_matches)],
+      ["SHA-256", dataset.hash],
+    ])}
+    ${distribution("Layanan Pemendek", dataset.shorteners)}
+    ${issues.length ? `<h3>Data yang Tidak Digunakan</h3>${table(["Nomor Baris CSV", "Alasan"],
+      issues.map((issue) => [issue.row, issue.message]))}<p class="hint">Laporan CSV mencantumkan semua baris yang tidak digunakan.</p>` : ""}
+  </section>`;
+}
+
+function renderSplit(dataset) {
+  const { split, audit, warnings } = dataset;
+  if (!split) return "";
+  const rows = Object.entries(splitLabels).flatMap(([key, [label, purpose]]) => {
+    const part = split[key];
+    return part ? [[label, purpose, count(part.rows), `${count(part.percent)}%`, count(part.groups),
+      count(part.benign), count(part.phishing), count(part.shorteners)]] : [];
+  });
+  if (!rows.length) return "";
+  const auditPassed = audit === true || audit?.passed === true;
+  return `<section class="card">
+    <h3>Audit dan Pembagian Dataset</h3>
+    <p>${auditPassed ? "Tidak ditemukan kebocoran berdasarkan URL dan domain yang diperiksa." : "Pemeriksaan hubungan lintas split memerlukan perhatian."}</p>
+    ${table(["Split", "Fungsi", "Data", "Rasio Aktual", "Kelompok", "Benign", "Phishing", "Tautan Pendek"], rows)}
+    <p class="hint">Target 70% pelatihan, 15% validasi, dan 15% pengujian dengan seed 42. Kelompok terkait tetap utuh. Tujuan tautan pendek tidak diketahui dari CSV.</p>
+    ${warnings?.length ? `<ul class="notice">${warnings.map((warning) => `<li>${escape(warning)}</li>`).join("")}</ul>` : ""}
+    </section>`;
+}
+
+const exportFiles = {
+  issues: ["data-tidak-digunakan.csv", "text/csv", "prepare"],
+  split: ["pembagian-dataset.csv", "text/csv", "split"],
+  basic: ["fitur-dasar.csv", "text/csv", "features"],
+  extended: ["fitur-lengkap.csv", "text/csv", "features"],
+  results: ["laporan-penelitian.json", "application/json", "evaluate"],
+};
+
 export function mount() {
-  const disposeResearch = mountResearchImport();
-  const input = document.querySelector("#dataset-file");
+  const workflow = document.querySelector("#dataset-workflow");
+  const input = workflow.querySelector("#dataset-file");
   const drop = document.querySelector("#dataset-drop");
+  const reset = document.querySelector("#dataset-reset");
+  const selectionError = document.querySelector("#dataset-selection-error");
   const output = document.querySelector("#dataset-result");
-  const error = document.querySelector("#dataset-error");
-  const button = document.querySelector("#analyze");
-  const cancel = document.querySelector("#dataset-cancel");
-  const verify = document.querySelector("#python-verify");
-  const continueLink = document.querySelector("#continue-training");
-  let lastSummary,
-    page = 0,
-    verification = null;
-  input.onchange = () => {
-    verification?.abort();
-    datasetStore.select(input.files[0] || null);
+  const downloads = document.querySelector("#dataset-downloads");
+  const resultLink = document.querySelector("#research-results-link");
+  const downloadError = document.querySelector("#research-download-error");
+  const exportButtons = [...downloads.querySelectorAll("[data-research-export]")];
+  const saved = mountResearchImport();
+  let lastDataset;
+  let renderedReport;
+  let previewPage = 0;
+  let selecting = false;
+  let exporting = null;
+
+  function showFileError(message) {
+    selectionError.textContent = message;
+    selectionError.hidden = !message;
+  }
+
+  function showPreview(dataset) {
+    const preview = (dataset.preview ?? []).slice(0, 20);
+    const rows = preview.slice(previewPage * 10, previewPage * 10 + 10)
+      .map(({ row, url, label }) => [row, url, classLabel(label === 1 ? "phishing" : "benign")]);
+    const target = document.querySelector("#preview-rows");
+    if (!target) return;
+    target.innerHTML = table(["Baris CSV", "Asal URL (Disamarkan)", "Label"], rows);
+    document.querySelector("#preview-page").textContent =
+      `Halaman ${previewPage + 1} dari ${Math.max(1, Math.ceil(preview.length / 10))}`;
+    document.querySelector("#preview-prev").disabled = previewPage === 0;
+    document.querySelector("#preview-next").disabled = (previewPage + 1) * 10 >= preview.length;
+  }
+
+  function renderDataset(dataset) {
+    if (dataset === lastDataset) return;
+    lastDataset = dataset;
+    previewPage = 0;
+    output.innerHTML = dataset ? `${renderSummary(dataset)}${renderSplit(dataset)}
+      ${dataset.preview?.length ? `<section class="card"><h3>Pratinjau Dataset · Maksimal 20 Baris</h3><div id="preview-rows"></div>
+        <div class="actions"><button id="preview-prev" class="button secondary" type="button">Halaman Sebelumnya</button>
+        <span id="preview-page" class="hint"></span><button id="preview-next" class="button secondary" type="button">Halaman Selanjutnya</button></div></section>` : ""}` : "";
+    if (!dataset?.preview?.length) return;
+    document.querySelector("#preview-prev").onclick = () => {
+      previewPage--;
+      showPreview(dataset);
+    };
+    document.querySelector("#preview-next").onclick = () => {
+      previewPage++;
+      showPreview(dataset);
+    };
+    showPreview(dataset);
+  }
+
+  const controls = mountResearchControls(workflow, (snapshot) => {
+    const busy = snapshot.phase === "running" || snapshot.phase === "loading";
+    input.disabled = busy || selecting;
+    reset.disabled = busy || selecting || (!selectedResearchFile() && !snapshot.dataset);
+    if (selecting) for (const button of workflow.querySelectorAll("[data-research-run]")) button.disabled = true;
+    downloads.hidden = !snapshot.dataset;
+    resultLink.hidden = !snapshot.completed.includes("evaluate");
+    for (const button of exportButtons) {
+      const kind = button.dataset.researchExport;
+      const stage = exportFiles[kind][2];
+      button.disabled = busy || Boolean(exporting) ||
+        !(snapshot.completed.includes(stage) || (kind === "issues" && snapshot.dataset));
+    }
+    if (renderedReport !== snapshot.report?.experiment_id) {
+      renderedReport = snapshot.report?.experiment_id;
+      saved.refresh();
+    }
+    renderDataset(snapshot.dataset);
+  });
+
+  async function select(candidate) {
+    if (selecting || automaticResearch.get().phase === "running") return;
+    if (candidate && !canUseResearchFile(candidate)) {
+      showFileError("Pilih satu file CSV yang tidak kosong dengan ukuran dalam batas yang ditampilkan.");
+      input.value = "";
+      return;
+    }
+    selecting = true;
+    showFileError("");
+    downloadError.hidden = true;
+    try {
+      const pending = selectResearchFile(candidate);
+      controls.refresh();
+      await pending;
+    } catch (error) {
+      showFileError(errorText(error));
+    } finally {
+      selecting = false;
+      controls.refresh();
+    }
+  }
+
+  input.onchange = () => select(input.files[0] ?? null);
+  reset.onclick = () => {
+    input.value = "";
+    return select(null);
   };
   for (const event of ["dragenter", "dragover"])
-    drop.addEventListener(event, (e) => {
-      e.preventDefault();
-      drop.classList.add("drag-active");
+    drop.addEventListener(event, (action) => {
+      action.preventDefault();
+      if (!input.disabled) drop.classList.add("drag-active");
     });
   for (const event of ["dragleave", "drop"])
-    drop.addEventListener(event, (e) => {
-      e.preventDefault();
+    drop.addEventListener(event, (action) => {
+      action.preventDefault();
       drop.classList.remove("drag-active");
     });
-  drop.addEventListener("drop", (e) => {
-    verification?.abort();
-    if (e.dataTransfer.files.length !== 1) {
-      error.textContent = "Pilih tepat satu file CSV.";
-      error.hidden = false;
+  drop.addEventListener("drop", (event) => {
+    if (input.disabled) return;
+    if (event.dataTransfer.files.length !== 1) {
+      showFileError("Pilih tepat satu file CSV.");
       return;
     }
     input.value = "";
-    datasetStore.select(e.dataTransfer.files[0]);
+    return select(event.dataTransfer.files[0]);
   });
-  button.onclick = () => datasetStore.start();
-  cancel.onclick = () => datasetStore.cancel();
-  document.querySelector("#dataset-reset").onclick = () => {
-    verification?.abort();
-    input.value = "";
-    datasetStore.reset();
-  };
-  continueLink.onclick = (e) => {
-    if (continueLink.getAttribute("aria-disabled") === "true")
-      e.preventDefault();
-  };
-  document.querySelector("#summary-download").onclick = () =>
-    download("dataset-summary.json", datasetStore.get().summary);
-  document.querySelector("#validation-download").onclick = () => {
-    const summary = datasetStore.get().summary;
-    download(
-      "validation-report.csv",
-      csv([
-        {
-          dataset_name: summary.dataset_name,
-          dataset_hash: summary.dataset_hash,
-          total_records: summary.total_records,
-          valid_records: summary.valid_records,
-          invalid_records: summary.invalid_records,
-          duplicate_records: summary.duplicate_records,
-          conflicting_labels: summary.conflicting_labels,
-          validation_status: summary.validation_status,
-          source: "browser",
-        },
-        ...summary.errors.map((e) => ({
-          dataset_name: summary.dataset_name,
-          dataset_hash: summary.dataset_hash,
-          validation_status: `Logical record ${e.row}: ${e.message}`,
-        })),
-      ]),
-      "text/csv",
-    );
-  };
-  function preview(summary) {
-    const target = document.querySelector("#preview-rows");
-    target.innerHTML = table(
-      ["Asal URL (disamarkan)", "Label", "Status Validasi"],
-      summary.preview
-        .slice(page * 10, page * 10 + 10)
-        .map((r) => [displayText(r.url), classLabel(r.label), displayText(r.status)]),
-    );
-    document.querySelector("#preview-page").textContent =
-      `Halaman ${page + 1} dari ${Math.max(1, Math.ceil(summary.preview.length / 10))} · ${summary.preview.length} data pertama dari ${summary.total_records.toLocaleString("id-ID")} data`;
-    document.querySelector("#preview-prev").disabled = page === 0;
-    document.querySelector("#preview-next").disabled =
-      (page + 1) * 10 >= summary.preview.length;
-  }
-  const unsubscribe = datasetStore.subscribe((data) => {
-    const running = ["Validating", "Processing"].includes(data.status);
-    document.querySelector("#selected-file").textContent = data.file
-      ? `File Terpilih: ${data.name} · ${formatBytes(data.size)}`
-      : "Belum ada file terpilih. Pilih ulang file setelah memuat ulang halaman.";
-    document.querySelector("#dataset-status").textContent = displayText(data.status);
-    document.querySelector("#dataset-percent").textContent =
-      `${data.progress.percent}%`;
-    document.querySelector("#dataset-progress").value = data.progress.percent;
-    document.querySelector("#dataset-progress-text").textContent =
-      `${formatBytes(data.progress.bytes)} / ${formatBytes(data.size)} dibaca · ${data.progress.rows.toLocaleString("id-ID")} data diproses`;
-    button.disabled =
-      running ||
-      !data.file ||
-      data.size > DATASET_LIMITS.maxFileBytes ||
-      !data.size ||
-      !/\.csv$/iu.test(data.name);
-    input.disabled = running;
-    cancel.disabled = !running;
-    error.hidden = !data.error;
-    error.textContent = errorText(data.error);
-    document.querySelector("#summary-download").disabled = !data.summary;
-    document.querySelector("#validation-download").disabled = !data.summary;
-    const eligibility = trainingEligibility(data);
-    document.querySelector("#dataset-eligibility").textContent =
-      data.status === "Validated"
-        ? `${data.summary.hasResearchMetadata ? "CSV Terbaca" : "Dataset Siap"} · ${data.summary.valid_records.toLocaleString("id-ID")} data valid. ${displayText(eligibility.reason)}`
-        : "Validasi dataset terpilih sebelum melanjutkan.";
-    continueLink.setAttribute(
-      "aria-disabled",
-      String(data.status !== "Validated"),
-    );
-    verify.disabled =
-      running ||
-      Boolean(verification) ||
-      !data.summary?.valid ||
-      data.summary.hasResearchMetadata ||
-      data.summary.urls_over_online_limit > 0 ||
-      data.size > ONLINE_LIMITS.maxFileBytes ||
-      data.summary.total_records > ONLINE_LIMITS.maxRows;
-    document.querySelector("#python-status").textContent = data.backend
-      ? "Validasi Python selesai. Ringkasannya disertakan dalam unduhan di bawah."
-      : "";
-    if (data.summary !== lastSummary) {
-      lastSummary = data.summary;
-      page = 0;
-      clearCharts();
-      if (!data.summary) {
-        output.innerHTML = "";
-        return;
+
+  for (const button of exportButtons)
+    button.onclick = async () => {
+      const kind = button.dataset.researchExport;
+      const [name, type] = exportFiles[kind];
+      exporting = kind;
+      downloadError.hidden = true;
+      controls.refresh();
+      try {
+        download(name, await automaticResearch.export(kind), type);
+      } catch (error) {
+        downloadError.textContent = errorText(error);
+        downloadError.hidden = false;
+      } finally {
+        exporting = null;
+        controls.refresh();
       }
-      const s = data.summary;
-      const metadata = s.metadata_validation;
-      output.innerHTML = `<section class="card"><h3>Ringkasan Validasi</h3><p>Sumber: browser · ${escape(displayText(s.validation_status))}. ${escape(displayText(s.counting))}</p>${table(
-        ["Ukuran", "Nilai"],
-        [
-          ["Nama Dataset", s.dataset_name],
-          ["Ukuran File", formatBytes(s.file_size)],
-          ["Total Data", s.total_records],
-          ["Data Valid", s.valid_records],
-          ["Data Tidak Valid", s.invalid_records],
-          ["URL Phishing", s.class_distribution.phishing],
-          ["URL Aman (benign)", s.class_distribution.benign],
-          ["URL Unik setelah Normalisasi", s.unique_records],
-          ["Nilai Kosong (baris)", s.missing_values],
-          ["URL Kosong", s.missing_urls],
-          ["Label Kosong", s.missing_labels],
-          ["URL Tidak Valid", s.invalid_urls],
-          ["URL di Atas Batas Daring", s.urls_over_online_limit],
-          ["Label Tidak Valid", s.invalid_labels],
-          ["Data Duplikat", s.duplicate_records],
-          ["Label Bertentangan (URL)", s.conflicting_labels],
-          ["Data dengan Label Bertentangan", s.conflicting_records],
-          ["Baris CSV Tidak Sesuai Format", s.csv_error_records],
-          ["Baris Kosong yang Diabaikan", s.blank_rows_ignored],
-          ["SHA-256", s.dataset_hash],
-        ],
-      )}</section>${s.hasResearchMetadata ? `<section class="card"><h3>Metadata CSV yang Terbaca</h3>
-        <p class="hint">${metadata.records_read.toLocaleString("id-ID")} baris sesuai struktur CSV. Lakukan audit kelompok dan split lintas berkas dengan pipeline lokal.</p>
-        ${table(["Pemeriksaan", "Jumlah Baris"], [
-          ["Konflik antara split dan split_final", metadata.split_conflict_records],
-          ["Nilai split tidak valid", metadata.invalid_split_records],
-          ["Konflik kategori dan label", metadata.category_label_conflict_records],
-        ])}
-        ${distribution("Split Tercatat", metadata.split_distribution)}
-        ${distribution("Kategori Tercatat", metadata.category_distribution)}
-        </section>` : ""}<div class="grid two">${plot("dataset-classes", "Distribusi Kelas Data Valid")}<section class="card"><h3>Masalah Validasi · 100 Pertama</h3>${table(
-        ["Nomor Data CSV (judul kolom = 1)", "Masalah"],
-        s.errors.map((e) => [e.row, displayText(e.message)]),
-      )}${s.errors_truncated ? "<p>Masalah lainnya tidak ditampilkan karena batas laporan.</p>" : ""}</section></div>
-      <section class="card"><h3>Pratinjau Dataset · 50 Data Pertama</h3><div id="preview-rows"></div><div class="actions"><button id="preview-prev" class="button secondary">Halaman Pratinjau Sebelumnya</button><span id="preview-page" class="hint"></span><button id="preview-next" class="button secondary">Halaman Pratinjau Selanjutnya</button></div></section>`;
-      chart(
-        "dataset-classes",
-        "doughnut",
-        ["Aman (benign)", "Phishing"],
-        [s.class_distribution.benign, s.class_distribution.phishing],
-      );
-      document.querySelector("#preview-prev").onclick = () => {
-        page--;
-        preview(s);
-      };
-      document.querySelector("#preview-next").onclick = () => {
-        page++;
-        preview(s);
-      };
-      preview(s);
-    }
-  });
-  verify.onclick = async () => {
-    const { file } = datasetStore.get();
-    datasetStore.setBackend(null, file);
-    verification = new AbortController();
-    verify.disabled = true;
-    const status = document.querySelector("#python-status");
-    status.textContent =
-      "Sedang mengirim file kecil terpilih ke Python untuk validasi independen…";
-    try {
-      const summary = await api("dataset/analyze", {
-        file,
-        signal: verification.signal,
-      });
-      datasetStore.setBackend(summary, file);
-    } catch (e) {
-      error.hidden = false;
-      error.textContent = errorText(e);
-    } finally {
-      verification = null;
-      const current = datasetStore.get();
-      verify.disabled =
-        !current.summary?.valid ||
-        current.summary.hasResearchMetadata ||
-        current.size > ONLINE_LIMITS.maxFileBytes ||
-        current.summary.total_records > ONLINE_LIMITS.maxRows;
-    }
-  };
-  document.querySelector("#summary-download").onclick = () =>
-    download("dataset-summary.json", {
-      ...datasetStore.get().summary,
-      backend_validation: datasetStore.get().backend,
-    });
+    };
+
   return () => {
-    disposeResearch();
-    unsubscribe();
-    verification?.abort();
+    controls.dispose();
+    saved.dispose();
   };
 }
