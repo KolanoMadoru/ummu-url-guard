@@ -1,4 +1,6 @@
-import { prepareAutomaticData, readAutomaticCSV, splitAutomaticData } from "../utils/automatic-data.js";
+import {
+  prepareAutomaticData, readAutomaticCSV, splitAutomaticData, summarizeShortenerCoverage,
+} from "../utils/automatic-data.js";
 import { compareHistoricalRedirects, redirectKeys } from "../utils/redirect-comparison.js";
 import { csv } from "../utils/storage.js";
 
@@ -79,6 +81,10 @@ async function load() {
     database = await openDatabase();
     checkpoint = await readCheckpoint() ?? empty();
     if (checkpoint.completed.length) phase = "complete";
+    if (checkpoint.dataset && checkpoint.split && checkpoint.prepared?.rows && !checkpoint.dataset.shortenerCoverage) {
+      addShortenerCoverage();
+      await saveCheckpoint();
+    }
   } catch {
     storageWarning = "Penyimpanan browser tidak tersedia. Hasil hanya bertahan selama halaman ini terbuka.";
   }
@@ -208,12 +214,19 @@ async function prepare(file, signal) {
   };
 }
 
+function addShortenerCoverage() {
+  const coverage = summarizeShortenerCoverage(checkpoint.prepared.rows, checkpoint.split);
+  checkpoint.dataset.shortenerCoverage = coverage;
+  if (checkpoint.report) checkpoint.report.shortener_coverage = coverage;
+}
+
 function split() {
   const { prepared } = checkpoint;
   const { train, validation, test, summary } = splitAutomaticData(prepared);
   checkpoint.split = { train, validation, test };
   const { audit, warnings, ...partitions } = summary;
   Object.assign(checkpoint.dataset, { split: partitions, audit, warnings });
+  addShortenerCoverage();
   advance(prepared.rows.length, prepared.rows.length, "Pembagian dan audit lintas partisi selesai");
 }
 
@@ -289,6 +302,7 @@ function evaluate() {
     rows: dataset.valid_rows,
     split: dataset.split,
     shorteners: dataset.shorteners,
+    shortener_coverage: dataset.shortenerCoverage,
     preprocessing: Object.fromEntries(
       ["source_rows", "valid_rows", "invalid_rows", "duplicate_rows", "conflicting_rows", "blank_rows"].map((key) => [key, dataset[key]]),
     ),
@@ -353,6 +367,11 @@ async function run(file, throughStage) {
 }
 
 function exportData(kind) {
+  if (kind === "shortener-coverage" && checkpoint.dataset?.shortenerCoverage) {
+    const rows = checkpoint.dataset.shortenerCoverage.providers.flatMap(({ name, ...coverage }) =>
+      PARTITIONS.map((split) => ({ provider: name, split, ...coverage[split] })));
+    return rows.length ? csv(rows) : "provider,split,benign,phishing\r\n";
+  }
   if (kind === "redirects" && checkpoint.redirectComparison) {
     const { summary, pairs } = checkpoint.redirectComparison;
     return JSON.stringify({ ...summary, pairs }, null, 2);

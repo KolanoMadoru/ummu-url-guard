@@ -153,9 +153,13 @@ export function mountResearchControls(element, onUpdate = () => {}) {
 }
 
 export function watchResearchReport(navigate) {
-  let current = currentResearchReport()?.experiment_id;
+  const signature = () => {
+    const report = currentResearchReport();
+    return report ? `${report.experiment_id}:${Boolean(report.shortener_coverage)}` : null;
+  };
+  let current = signature();
   return automaticResearch.subscribe(() => {
-    const changed = currentResearchReport()?.experiment_id;
+    const changed = signature();
     if (changed === current) return;
     current = changed;
     navigate();

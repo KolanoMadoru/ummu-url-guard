@@ -22,9 +22,15 @@ Dataset, model, dan hasil riset tidak disertakan. Label historis dan keluaran mo
 
 ## Perbandingan URL pendek
 
-Di **Pemindai URL**, gunakan **Pindai URL** untuk menghitung fitur dan prediksi URL awal. Tautan bertoken dari layanan pemendek yang dikenal menampilkan tombol **Periksa Tujuan Redirect**. Aktifkan `ONLINE_SCAN_ENABLED=1` pada server jika pemeriksaan HEAD diizinkan. Status pemeriksaan, tujuan akhir, dan rantai pengalihan ditampilkan sebagai teks. Bila server memblokir tujuan, tidak menemukan redirect, atau kehabisan waktu, analisis awal tetap tersedia dan kolom tujuan menampilkan N/A.
+Di **Pemindai URL**, gunakan **Pindai URL** untuk menghitung fitur dan prediksi URL awal. Tautan bertoken dari layanan pemendek yang dikenal menampilkan tombol **Periksa Tujuan Redirect**. Aktifkan `ONLINE_SCAN_ENABLED=1` pada server untuk mengizinkan pemeriksaan. Pemindai mencoba HEAD lebih dulu. Bila perlu, pemindai dapat mencoba satu GET pada tautan pemendek yang dikenali dan menutup koneksi setelah membaca header. Status dan metode setiap tahap ditampilkan bersama rantai pengalihan.
 
-Pemindai menampilkan fitur awal dan tujuan berdampingan. Penanda **Dasar** menunjukkan tujuh fitur yang juga termasuk dalam 19 fitur lengkap. Jika model tersedia, masing-masing URL memperoleh prediksi dan skor dari model yang sama. Skor tersebut belum dikalibrasi. Tujuan yang diperiksa scanner adalah pengamatan saat itu melalui HEAD. Tujuan dapat berbeda pada waktu lain atau untuk klien lain.
+Pemindai menampilkan fitur awal dan tujuan berdampingan. Penanda **Dasar** menunjukkan tujuh fitur yang juga termasuk dalam 19 fitur lengkap. Jika model tersedia, masing-masing URL memperoleh prediksi dan skor dari model yang sama. Skor tersebut belum dikalibrasi. Jika lokasi publik sudah teramati tetapi respons tujuan belum dapat dikonfirmasi, pemindai menampilkan lokasi itu secara terpisah dan memberi nilai N/A untuk fitur tujuan. Pemeriksaan hanya mengikuti pengalihan HTTP. Tujuan dapat berbeda pada waktu lain atau untuk klien lain.
+
+### Cakupan URL pendek dalam dataset
+
+Setelah data dibagi, **Cakupan URL Pendek per Partisi** menunjukkan jumlah benign dan phishing per penyedia di pelatihan, validasi, dan pengujian. Unduh tabel sebagai CSV dari **Manajemen Dataset**. Aplikasi memperingatkan jika satu label berasal dari terlalu sedikit kelompok independen atau tidak terwakili dalam suatu split. Menambah tautan dari domain yang sama dapat menambah jumlah sampel, sedangkan contoh dari domain penyedia yang berbeda dapat menambah jumlah kelompok. Split yang sudah disimpan dapat dihitung ulang cakupannya saat workspace dibuka.
+
+Di **Evaluasi Model**, **Positif Palsu pada URL Pendek** menunjukkan berapa URL pendek benign yang diprediksi phishing dari seluruh URL pendek benign pada data uji. Jika penyebutnya nol, tingkat positif palsu tampil sebagai N/A. Gunakan jumlah dan cakupan kelompok ketika menafsirkan hasil dengan sampel kecil.
 
 ### Analisis bukti historis
 
@@ -56,7 +62,7 @@ python -m uvicorn api.index:app --host 127.0.0.1 --port 8000 --no-access-log
 
 In a second terminal, run `npm run dev`. Vite proxies `/api` to Python on port 8000. Open the address printed by Vite. `/api/health` reports API and deployed-model availability; `/api/docs` documents the endpoints. On cloud machines with a read-only home directory, use `npm ci --cache /workspace/.npm-cache`.
 
-No database, API key, cloud storage, or environment variables are required. Optional configuration is documented in `.env.example`. Export variables in the shell or configure them in your hosting provider. Exact CORS origins are opt-in through `ALLOWED_ORIGINS`. The scanner uses lexical analysis by default. Set `ONLINE_SCAN_ENABLED=1` only for deployments where optional outbound HEAD checks are needed.
+No database, API key, cloud storage, or environment variables are required. Optional configuration is documented in `.env.example`. Export variables in the shell or configure them in your hosting provider. Exact CORS origins are opt-in through `ALLOWED_ORIGINS`. The scanner uses lexical analysis by default. Set `ONLINE_SCAN_ENABLED=1` to allow optional outbound redirect checks.
 
 The current cloud machine can run the app and experiments but does not resolve arbitrary outbound scanner targets. It returns an honest online-check-unavailable result while retaining lexical analysis. This does not establish live-network scanning readiness on a deployed host.
 
@@ -97,7 +103,7 @@ Laporan lama dalam format `research-summary.json` masih dapat diimpor secara ops
 
 ## Network and privacy safeguards
 
-Input permits HTTP(S) only, with no URL credentials, whitespace, control characters or backslashes; hostnames use IDNA normalization. The scanner permits only each scheme's default port, validates **every** DNS answer, rejects non-public IPs/internal names, then connects to a validated numeric IP without re-resolving. HTTPS uses the original hostname for SNI and certificate verification. Every redirect repeats the full checks. Mixed public/private DNS answers reject the target. At most five redirects, 32 KiB headers per response, five seconds per request and twelve seconds total are allowed. DNS and network concurrency are bounded. Unsupported HEAD returns unavailable; there is no GET fallback. Proxies are not used because connection pinning could not otherwise be established. A restricted environment may therefore disable online checking safely.
+Input permits HTTP(S) only. Credentials, whitespace, control characters, and backslashes are rejected. Hostnames use IDNA normalization. The scanner permits only each scheme's default port, validates **every** DNS answer, rejects non-public IPs and internal names, and connects to a validated numeric IP. HTTPS uses the original hostname for SNI and certificate verification. Every redirect repeats these checks. Mixed public/private DNS answers reject the target. At most five redirects, 32 KiB headers per response, five seconds per request, and twelve seconds total are allowed. A GET retry is limited to one known token-bearing shortener per check. The scanner reads only headers and closes the connection without reading response bodies. Redirects implemented in HTML or JavaScript are outside the HTTP header check. Direct connections preserve IP pinning and depend on destination reachability from the deployment.
 
 Request bodies and CSV rows are bounded. Rate limits per client and process are 100 feature-batch requests, 12 browser-training requests, and 30 other requests per minute. Each process handles one training request at a time. Forwarded headers are not trusted directly. For a public deployment, review Vercel Firewall and access rules for the intended audience. The provider enforces the function deadline.
 
@@ -118,7 +124,7 @@ npm run test:browser
 
 The browser runner starts Python and Vite when needed. On a machine with system Chromium, use `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium npm run test:browser`. Ensure the venv is activated so its Python is used. CI also runs the workflow on push and pull request. Redirect tests use mocked HEAD and DNS responses for success, blocked destinations, and timeout. Historical comparison tests use synthetic evidence. Live targets and the original research dataset are outside this test coverage.
 
-Validated in this cloud instance: lexical extraction, URL rejection and IDNA, real test-fixture training and model reload/checksum rejection, group isolation, metrics, CSV validation, DNS/IP/redirect blocking, pinned connections with verified TLS context, HEAD-only reads, body/rate limits, localStorage masking/deletion/exports, all nine pages, frontend/API integration and mobile navigation. See the pull request for final test counts. This is **not** evidence of Vercel deployment or real-world classifier accuracy.
+Validated in this cloud instance: lexical extraction, URL rejection and IDNA, real test-fixture training and model reload/checksum rejection, group isolation, metrics, CSV validation, DNS/IP/redirect blocking, pinned connections with verified TLS context, header-only responses, body/rate limits, localStorage masking/deletion/exports, all nine pages, frontend/API integration and mobile navigation. Hosted deployment and performance on the original research dataset need separate verification.
 
 ## Vercel deployment
 

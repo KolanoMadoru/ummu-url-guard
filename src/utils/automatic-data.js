@@ -270,6 +270,60 @@ function auditPartitions(rows, partitions) {
   return { passed: Object.values(counts).every((count) => count === 0), ...counts };
 }
 
+const COVERAGE_LABELS = ["benign", "phishing"];
+const PARTITION_LABELS = { train: "pelatihan", validation: "validasi", test: "uji" };
+const emptyLabelCounts = () => ({ benign: 0, phishing: 0 });
+
+export function summarizeShortenerCoverage(rows, partitions) {
+  const providers = new Map();
+  const groups = { benign: new Set(), phishing: new Set() };
+  const testGroups = { benign: new Set(), phishing: new Set() };
+  const totals = Object.fromEntries(PARTITIONS.map((name) => [name, emptyLabelCounts()]));
+
+  for (const name of PARTITIONS) {
+    for (const index of partitions[name]) {
+      const { provider, label, group } = rows[index];
+      if (!provider) continue;
+      const key = COVERAGE_LABELS[label];
+      if (!providers.has(provider)) {
+        const splits = Object.fromEntries(PARTITIONS.map((part) => [part, emptyLabelCounts()]));
+        providers.set(provider, { name: provider, ...splits });
+      }
+      providers.get(provider)[name][key]++;
+      totals[name][key]++;
+      groups[key].add(group);
+      if (name === "test") testGroups[key].add(group);
+    }
+  }
+
+  const warnings = [];
+  if (providers.size) {
+    for (const label of COVERAGE_LABELS) {
+      const count = groups[label].size;
+      if (!count) {
+        warnings.push(`Tidak ada URL pendek berlabel ${label} dalam dataset.`);
+        continue;
+      }
+      if (count < PARTITIONS.length) {
+        warnings.push(`URL pendek ${label} hanya berasal dari ${count} kelompok independen. Diperlukan minimal tiga kelompok agar label ini bisa diwakili di ketiga split.`);
+      }
+      const missing = PARTITIONS.filter((name) => !totals[name][label]).map((name) => PARTITION_LABELS[name]);
+      if (missing.length) {
+        warnings.push(`URL pendek ${label} tidak tersedia pada data ${missing.join(", ")}.`);
+      }
+      if (testGroups[label].size === 1 && count > 1) {
+        warnings.push(`URL pendek ${label} pada data uji berasal dari satu kelompok domain. Hasil uji untuk label ini terbatas pada kelompok tersebut.`);
+      }
+    }
+  }
+
+  return {
+    providers: [...providers.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    groups: { benign: groups.benign.size, phishing: groups.phishing.size },
+    warnings,
+  };
+}
+
 export function splitAutomaticData({ rows, groups }) {
   if (!rows.length) throw new Error("Tidak ada URL valid untuk dibagi. Periksa laporan baris yang tidak dipakai.");
   const details = groups.map((indices) => ({ indices, stats: groupStats(indices, rows) }));

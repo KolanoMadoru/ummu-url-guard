@@ -56,7 +56,7 @@ function renderResult(scan) {
     : online.reason;
   const networkReason = reason
     ? displayText(reason)
-    : online.status === "complete" ? "Metadata HEAD diterima." : displayText(online.status);
+    : online.status === "complete" ? "Header HTTP diterima." : displayText(online.status);
   const initialTitle = initial.prediction
     ? `Prediksi ${classLabel(initial.prediction)}`
     : "Prediksi Tidak Tersedia — model belum dilatih";
@@ -83,10 +83,13 @@ function renderResult(scan) {
     </div>
     ${table(["Properti", "Pengamatan"], [
       ["URL Tujuan", destination?.url ?? "URL tujuan tidak tersedia"],
+      ...(!destination && online.observed_url
+        ? [["URL publik terakhir (tujuan akhir belum dikonfirmasi)", online.observed_url]]
+        : []),
       ...predictionRows(destination, "Prediksi URL Tujuan"),
       ["Status pemeriksaan", displayText(online.status)],
       ["Keterangan", networkReason],
-      ["Status HTTP", online.http_status ?? unavailable],
+      ["Status HTTP terakhir", online.http_status ?? unavailable],
       ["Jumlah Pengalihan", online.redirect_count ?? 0],
     ])}
     ${destination ? '<p class="hint">Tujuan diamati saat pemindaian ini.</p>' : ""}
@@ -106,7 +109,7 @@ function renderResult(scan) {
       )}
     </section>
     ${online.chain?.length ? `<section class="card"><h3>Rantai Pengalihan yang Diamati</h3>${table(
-      ["URL", "Status HEAD"], online.chain.map((hop) => [hop.url, hop.status]),
+      ["URL", "Metode HTTP", "Status HTTP"], online.chain.map((hop) => [hop.url, hop.method ?? "HEAD", hop.status]),
     )}</section>` : ""}`;
 }
 
@@ -117,7 +120,7 @@ export function render() {
         <button class="button" id="scan-button"><i data-lucide="scan-line"></i> Pindai URL</button>
         <button class="button secondary" type="reset">Hapus</button>
       </div>
-      <p class="hint">Pemindaian awal menghitung ciri URL. Pemeriksaan redirect opsional hanya membaca header HTTP.</p>
+      <p class="hint">Pemindaian awal menghitung ciri URL. Pemeriksaan redirect dimulai dengan HEAD dan dapat membaca header GET dari layanan pemendek yang dikenal.</p>
     </form><p class="error" id="scan-error" role="alert" hidden></p><p id="scan-progress" role="status"></p></section>
     <div id="scan-result" aria-live="polite"></div><div class="notice">Hasil prediksi machine learning merupakan indikator dan bukan jaminan keamanan suatu website.</div>`;
 }
