@@ -1,3 +1,6 @@
+import hashlib
+
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from api import index
@@ -71,3 +74,94 @@ def test_body_limit_and_rate_limit(client):
     for _ in range(29):
         client.get('/api/health')
     assert client.get('/api/health').status_code == 429
+
+
+def test_research_features_share_lexical_extraction_without_scanning(client, monkeypatch):
+    def unexpected_scan(_):
+        pytest.fail("Batch features must not check a target over the network")
+
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
+    monkeypatch.setattr(index, 'scan_url', unexpected_scan)
+    urls = [
+        'http://www.example.com/Pa%74h/?a=%2F#part',
+        'https://example.com/Path?a=%2f',
+        'https://t.ly/AsIs',
+        'https://t.ly/',
+        'http://127.0.0.1/path',
+        'https://site.example.co.id/',
+        None,
+        'invalid',
+    ]
+    response = client.post('/api/research/features', json={'urls': urls})
+    assert response.status_code == 200
+    assert response.headers['Cache-Control'] == 'no-store'
+    batch = response.json()
+    assert len(batch['feature_names']) == 19 and len(batch['basic_features']) == 7
+    assert batch['schema_version'] == 'lexical-v2'
+    assert ':sha256:' in batch['psl_version']
+    first, second, short, homepage, ip, idn_domain, *invalid = batch['rows']
+    assert first['normalized'] != second['normalized']
+    assert first['related'] == second['related'] == '//example.com/Path?a=%2F'
+    assert first['domain'] == second['domain'] == 'example.com'
+    assert short['provider'] == 't.ly' and homepage['provider'] is None
+    assert ip['domain'] == '127.0.0.1'
+    assert idn_domain['domain'] == 'example.co.id'
+    assert invalid == [None, None]
+    single = client.post('/api/features', json={'url': urls[0]}).json()
+    assert first['features'] == [single['features'][name] for name in batch['feature_names']]
+
+
+def test_research_feature_batch_bounds_and_rate_scope(client, monkeypatch):
+    path = '/api/research/features'
+    for _ in range(index.RATE_LIMITS['default']):
+        assert client.get('/api/health').status_code == 200
+    assert client.get('/api/health').status_code == 429
+    assert client.post(path, json={'urls': ['https://example.com/']}).status_code == 200
+    assert client.post(path, json={'urls': [None] * (index.FEATURE_BATCH_ROWS + 1)}).status_code == 413
+    assert client.post(path, content=b'x' * (index.FEATURE_BATCH_BYTES + 1)).status_code == 413
+    assert client.post(path, json={'urls': []}).status_code == 422
+    assert client.post(path, data={'urls': 'https://example.com/'}).status_code == 415
+    invalid = client.post(path, content=b'{"secret":"test-private"', headers={'Content-Type': 'application/json'})
+    assert invalid.status_code == 422 and 'test-private' not in invalid.text
+    monkeypatch.setattr(index, 'RESEARCH_RESPONSE_BYTES', 512)
+    assert client.post(path, json={'urls': ['https://example.com/']}).status_code == 413
+
+
+def test_research_feature_busy_releases_capacity(client):
+    path = '/api/research/features'
+    payload = {'urls': ['https://example.com/']}
+    for _ in range(2):
+        assert index.FEATURE_BATCH_SLOTS.acquire(blocking=False)
+    try:
+        response = client.post(path, json=payload)
+        assert response.status_code == 429
+        assert response.headers['Retry-After'] == '1'
+    finally:
+        for _ in range(2):
+            index.FEATURE_BATCH_SLOTS.release()
+    assert client.post(path, json=payload).status_code == 200
+
+
+def test_research_train_consumes_bounded_binary_requests(client):
+    path = '/api/research/train/'
+    content_type = {'Content-Type': 'application/octet-stream'}
+    urls = [f'https://site-{row}.example.com/{row}' for row in range(12)]
+    batch = client.post('/api/research/features', json={'urls': urls}).json()
+    matrix = np.array([row['features'] for row in batch['rows']], dtype='<f4')
+    labels = bytes([0, 1] * 6)
+    splits = bytes([0] * 4 + [1] * 4 + [2] * 4)
+    scenarios = bytes(12)
+    payload = matrix.tobytes() + labels + splits + scenarios
+    response = client.post(path + 'E4', content=payload, headers=content_type)
+    assert response.status_code == 200
+    result = response.json()
+    assert result['configuration_id'] == 'E4'
+    assert result['model_name'] == 'Decision Tree'
+    assert result['matrix_sha256'] == hashlib.sha256(payload).hexdigest()
+    assert result['train_count'] == result['validation_count'] == result['test_count'] == 4
+    assert len(result['test_predictions']) == 4
+    assert client.post(path + 'E7', content=payload, headers=content_type).status_code == 422
+    assert client.post(path + 'E4', content=payload).status_code == 415
+    assert client.post(path + 'E4', content=payload[:-1], headers=content_type).status_code == 422
+    too_large = b'x' * (index.MAX_BROWSER_TRAINING_BYTES + 1)
+    assert client.post(path + 'E4', content=too_large, headers=content_type).status_code == 413

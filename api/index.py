@@ -1,7 +1,6 @@
 """FastAPI entry point for Uvicorn and Vercel Python Functions."""
 from collections import defaultdict, deque
 from datetime import datetime, timezone
-import json
 import os
 import sys
 from pathlib import Path
@@ -13,11 +12,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from ml.browser_training import MAX_BROWSER_TRAINING_BYTES, train_browser_experiment
 from ml.dataset import read_dataset, MAX_UPLOAD_BYTES
-from ml.features import MAX_URL_LENGTH, extract_features
+from ml.features import (
+    BASIC_FEATURES, FEATURE_NAMES, MAX_URL_LENGTH, PSL_VERSION, REFERENCE_VERSION,
+    SCHEMA_VERSION, SHORTENER_VERSION, extract_features, related_url_key,
+)
 from ml.model import ProductionModel, run_experiment
 from ml.scanner import scan_url
 
@@ -26,9 +30,37 @@ origins = [s.strip() for s in os.getenv("ALLOWED_ORIGINS", "").split(",") if s.s
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"], allow_headers=["Content-Type"], allow_credentials=False)
 production = ProductionModel()
 TRAIN_SLOT = threading.BoundedSemaphore(1)
+FEATURE_BATCH_SLOTS = threading.BoundedSemaphore(2)
 RATE_LOCK = threading.Lock()
 RATE_BUCKETS = defaultdict(deque)
 BODY_LIMIT = MAX_UPLOAD_BYTES + 65536
+FEATURE_BATCH_ROWS = 2500
+FEATURE_BATCH_BYTES = 1_500_000
+RESEARCH_RESPONSE_BYTES = 3_950_000
+RESEARCH_FEATURE_PATH = "/api/research/features"
+RESEARCH_TRAIN_PATH = "/api/research/train/"
+RATE_LIMITS = {"default": 30, "research_features": 100, "research_train": 12}
+
+
+def path_scope(path):
+    if path == RESEARCH_FEATURE_PATH:
+        return "research_features"
+    if path.startswith(RESEARCH_TRAIN_PATH):
+        return "research_train"
+    return "default"
+
+
+def request_byte_limit(path):
+    scope = path_scope(path)
+    if scope == "research_features":
+        return FEATURE_BATCH_BYTES
+    if scope == "research_train":
+        return MAX_BROWSER_TRAINING_BYTES
+    if path in ("/api/train", "/api/dataset/analyze", "/api/experiment"):
+        return BODY_LIMIT
+    if path == "/api/evaluate":
+        return 4 * 1024 * 1024
+    return 16384
 
 
 class ResourceGuard:
@@ -39,18 +71,18 @@ class ResourceGuard:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
-        path = scope.get("path", "")
-        limit = BODY_LIMIT if path in ("/api/train", "/api/dataset/analyze", "/api/experiment") else (4 * 1024 * 1024 if path == "/api/evaluate" else 16384)
+        limit = request_byte_limit(scope.get("path", ""))
         body = bytearray()
         while True:
             message = await receive()
             if message["type"] == "http.disconnect":
                 return
-            body.extend(message.get("body", b""))
-            if len(body) > limit:
+            chunk = message.get("body", b"")
+            if len(body) + len(chunk) > limit:
                 await send({"type": "http.response.start", "status": 413, "headers": [(b"content-type", b"application/json")]})
                 await send({"type": "http.response.body", "body": b'{"detail":"Request body exceeds the endpoint limit."}'})
                 return
+            body.extend(chunk)
             if not message.get("more_body", False):
                 break
         sent = False
@@ -70,21 +102,21 @@ app.add_middleware(ResourceGuard)
 async def guard(request: Request, call_next):
     # Deliberately do not trust user-controlled X-Forwarded-For headers.
     # This is per-process protection; deploy a platform firewall rate limit for public traffic.
-    key = request.client.host if request.client else "unknown"
+    scope = path_scope(request.url.path)
+    key = (request.client.host if request.client else "unknown", scope)
+    limit = RATE_LIMITS[scope]
     now = time.monotonic()
     with RATE_LOCK:
         for old in list(RATE_BUCKETS):
             if not RATE_BUCKETS[old] or RATE_BUCKETS[old][-1] < now - 60:
                 del RATE_BUCKETS[old]
         if len(RATE_BUCKETS) >= 2048 and key not in RATE_BUCKETS:
-            from fastapi.responses import JSONResponse
             return JSONResponse({"detail": "Server rate-limit capacity reached."}, status_code=429, headers={"Retry-After": "60"})
         bucket = RATE_BUCKETS[key]
         while bucket and bucket[0] < now - 60:
             bucket.popleft()
-        if len(bucket) >= 30:
-            from fastapi.responses import JSONResponse
-            return JSONResponse({"detail": "Limit: 30 requests per minute per client/process."}, status_code=429, headers={"Retry-After": "60"})
+        if len(bucket) >= limit:
+            return JSONResponse({"detail": f"Limit: {limit} requests per minute per client/process."}, status_code=429, headers={"Retry-After": "60"})
         bucket.append(now)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -126,6 +158,80 @@ def health():
 @app.post("/api/features")
 def features(body: URLRequest):
     return extraction_or_error(body.url)
+
+
+def research_json(content):
+    response = JSONResponse(content)
+    if len(response.body) > RESEARCH_RESPONSE_BYTES:
+        raise HTTPException(413, "Hasil melebihi batas respons penelitian.")
+    return response
+
+
+def require_content_type(request, expected):
+    actual = request.headers.get("content-type", "").split(";", maxsplit=1)[0].strip().lower()
+    if actual != expected:
+        raise HTTPException(415, f"Gunakan Content-Type {expected}.")
+
+
+def extract_feature_batch(urls):
+    rows = []
+    for url in urls:
+        try:
+            result = extract_features(url)
+        except ValueError:
+            rows.append(None)
+            continue
+        rows.append({
+            "normalized": result["url"],
+            "related": related_url_key(result["url"]),
+            "domain": result["registered_domain"],
+            "features": [result["features"][name] for name in FEATURE_NAMES],
+            "provider": result["shortener_provider"],
+            "brand": result["typosquatting"]["indicator"],
+        })
+    return research_json({
+        "schema_version": SCHEMA_VERSION,
+        "reference_version": REFERENCE_VERSION,
+        "shortener_version": SHORTENER_VERSION,
+        "psl_version": PSL_VERSION,
+        "feature_names": FEATURE_NAMES,
+        "basic_features": BASIC_FEATURES,
+        "rows": rows,
+    })
+
+
+@app.post(RESEARCH_FEATURE_PATH)
+async def research_features(request: Request):
+    require_content_type(request, "application/json")
+    try:
+        body = await request.json()
+    except (ValueError, RecursionError):
+        raise HTTPException(422, "Kirim objek JSON dengan daftar URL.") from None
+    urls = body.get("urls") if isinstance(body, dict) else None
+    if not isinstance(urls, list) or not urls:
+        raise HTTPException(422, "Kirim objek JSON dengan daftar URL.")
+    if len(urls) > FEATURE_BATCH_ROWS:
+        raise HTTPException(413, f"Batch maksimal {FEATURE_BATCH_ROWS} URL.")
+    if not FEATURE_BATCH_SLOTS.acquire(blocking=False):
+        raise HTTPException(429, "Kapasitas ekstraksi fitur sedang sibuk.", headers={"Retry-After": "1"})
+    try:
+        return await run_in_threadpool(extract_feature_batch, urls)
+    finally:
+        FEATURE_BATCH_SLOTS.release()
+
+
+@app.post(RESEARCH_TRAIN_PATH + "{config}")
+async def research_train(config: str, request: Request):
+    require_content_type(request, "application/octet-stream")
+    if not TRAIN_SLOT.acquire(blocking=False):
+        raise HTTPException(429, "Pelatihan sedang berjalan pada proses ini.", headers={"Retry-After": "1"})
+    try:
+        result = await run_in_threadpool(train_browser_experiment, config, await request.body())
+        return research_json(result)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    finally:
+        TRAIN_SLOT.release()
 
 
 @app.post("/api/predict")

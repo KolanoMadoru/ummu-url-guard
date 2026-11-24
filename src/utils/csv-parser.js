@@ -105,6 +105,93 @@ export function normalizeDatasetURL(value) {
   };
 }
 
+export async function streamCSVRecords(file, {
+  limits = DATASET_LIMITS,
+  chunkBytes = limits.chunkBytes,
+  onProgress = () => {},
+  rowsProcessed = () => 0,
+  onRecord,
+  signal,
+} = {}) {
+  if (!file || !file.size)
+    throw new Error("CSV is empty. Select a file with url,label and data rows.");
+  if (file.name && !/\.csv$/iu.test(file.name))
+    throw new Error("Select a .csv file containing UTF-8 text.");
+  if (file.size > limits.maxFileBytes)
+    throw new Error(
+      `File exceeds the ${(limits.maxFileBytes / 1048576).toFixed(0)} MiB browser validation limit.`,
+    );
+  if (!Number.isInteger(chunkBytes) || chunkBytes < 1 || chunkBytes > 1048576)
+    throw new Error("Invalid parser chunk size.");
+
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const hash = sha256.create();
+  let newline = null, pending = "", offset = 0;
+  onProgress({
+    bytes: 0,
+    totalBytes: file.size,
+    rows: 0,
+    percent: 0,
+    phase: "Validating",
+  });
+  while (offset < file.size) {
+    if (signal?.aborted)
+      throw new DOMException("Processing cancelled.", "AbortError");
+    const data = new Uint8Array(
+      await file.slice(offset, offset + chunkBytes).arrayBuffer(),
+    );
+    offset += data.length;
+    hash.update(data);
+    try {
+      pending += decoder.decode(data, { stream: offset < file.size });
+    } catch {
+      throw new Error(
+        "Invalid UTF-8 encoding. Save the CSV as UTF-8 and select it again.",
+      );
+    }
+    const final = offset === file.size;
+    if (!newline) {
+      const end = pending.indexOf("\n");
+      if (end >= 0)
+        newline = end > 0 && pending[end - 1] === "\r" ? "\r\n" : "\n";
+      else if (final) newline = "\n";
+    }
+    if (newline) {
+      const result = new Papa.Parser({
+        delimiter: ",",
+        newline,
+        fastMode: false,
+      }).parse(pending, 0, !final);
+      const invalidRows = new Set(result.errors.map((e) => e.row));
+      result.data.forEach((row, i) => {
+        // Papa emits an empty terminal row for a trailing newline.
+        if (
+          final &&
+          i === result.data.length - 1 &&
+          row.length === 1 &&
+          !row[0] &&
+          pending.endsWith(newline)
+        )
+          return;
+        if (encoder.encode(row.join(",")).byteLength > limits.maxRecordBytes)
+          throw new Error("A CSV record exceeds the 256 KiB resource limit.");
+        onRecord(row, invalidRows.has(i));
+      });
+      pending = pending.slice(result.meta.cursor);
+    }
+    if (encoder.encode(pending).byteLength > limits.maxRecordBytes)
+      throw new Error("A CSV record exceeds the 256 KiB resource limit.");
+    onProgress({
+      bytes: offset,
+      totalBytes: file.size,
+      rows: rowsProcessed(),
+      percent: Math.floor((offset / file.size) * 100),
+      phase: "Processing",
+    });
+  }
+  return bytesToHex(hash.digest());
+}
+
 export async function analyzeCSV(
   file,
   {
@@ -114,26 +201,12 @@ export async function analyzeCSV(
     signal,
   } = {},
 ) {
-  if (!file || !file.size)
-    throw new Error(
-      "CSV is empty. Select a file with url,label and data rows.",
-    );
-  if (file.name && !/\.csv$/iu.test(file.name))
-    throw new Error("Select a .csv file containing UTF-8 text.");
-  if (file.size > limits.maxFileBytes)
-    throw new Error(
-      `File exceeds the ${(limits.maxFileBytes / 1048576).toFixed(0)} MiB browser validation limit.`,
-    );
-  if (!Number.isInteger(chunkBytes) || chunkBytes < 1 || chunkBytes > 1048576)
-    throw new Error("Invalid parser chunk size.");
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  const hash = sha256.create();
   const seen = new Map(); // SHA-256 keys across ALL chunks, bounded by maxUniqueURLs.
   const preview = [],
     errors = [];
   const summary = {
-    dataset_name: file.name || "dataset.csv",
-    file_size: file.size,
+    dataset_name: file?.name || "dataset.csv",
+    file_size: file?.size,
     source: "browser",
     total_records: 0,
     valid_records: 0,
@@ -158,11 +231,7 @@ export async function analyzeCSV(
     storage:
       "File reference and bounded summary in session memory only; never localStorage.",
   };
-  let columns = null,
-    newline = null,
-    pending = "",
-    offset = 0,
-    recordNumber = 0;
+  let columns = null, recordNumber = 0;
   const issue = (row, message) => {
     if (errors.length < 100) errors.push({ row, message });
   };
@@ -172,8 +241,6 @@ export async function analyzeCSV(
       summary.blank_rows_ignored++;
       return;
     }
-    if (encoder.encode(row.join(",")).byteLength > limits.maxRecordBytes)
-      throw new Error("A CSV record exceeds the 256 KiB resource limit.");
     if (!columns) {
       columns = new Map(row.map((s, i) => [s.trim().toLowerCase(), i]));
       if (
@@ -293,72 +360,16 @@ export async function analyzeCSV(
         key,
       });
   }
-  onProgress({
-    bytes: 0,
-    totalBytes: file.size,
-    rows: 0,
-    percent: 0,
-    phase: "Validating",
+  summary.dataset_hash = await streamCSVRecords(file, {
+    limits, chunkBytes, signal, onProgress,
+    rowsProcessed: () => summary.total_records,
+    onRecord: consume,
   });
-  while (offset < file.size) {
-    if (signal?.aborted)
-      throw new DOMException("Processing cancelled.", "AbortError");
-    const data = new Uint8Array(
-      await file.slice(offset, offset + chunkBytes).arrayBuffer(),
-    );
-    offset += data.length;
-    hash.update(data);
-    try {
-      pending += decoder.decode(data, { stream: offset < file.size });
-    } catch {
-      throw new Error(
-        "Invalid UTF-8 encoding. Save the CSV as UTF-8 and select it again.",
-      );
-    }
-    const final = offset === file.size;
-    if (!newline) {
-      const end = pending.indexOf("\n");
-      if (end >= 0)
-        newline = end > 0 && pending[end - 1] === "\r" ? "\r\n" : "\n";
-      else if (final) newline = "\n";
-    }
-    if (newline) {
-      const result = new Papa.Parser({
-        delimiter: ",",
-        newline,
-        fastMode: false,
-      }).parse(pending, 0, !final);
-      const invalidRows = new Set(result.errors.map((e) => e.row));
-      result.data.forEach((row, i) => {
-        // Papa emits an empty terminal row for a trailing newline; it is not a data record.
-        if (
-          final &&
-          i === result.data.length - 1 &&
-          row.length === 1 &&
-          !row[0] &&
-          pending.endsWith(newline)
-        )
-          return;
-        consume(row, invalidRows.has(i));
-      });
-      pending = pending.slice(result.meta.cursor);
-    }
-    if (encoder.encode(pending).byteLength > limits.maxRecordBytes)
-      throw new Error("A CSV record exceeds the 256 KiB resource limit.");
-    onProgress({
-      bytes: offset,
-      totalBytes: file.size,
-      rows: summary.total_records,
-      percent: Math.floor((offset / file.size) * 100),
-      phase: "Processing",
-    });
-  }
   if (!columns || !summary.total_records)
     throw new Error(
       "CSV must contain url,label headers and at least one data row.",
     );
   summary.unique_records = seen.size;
-  summary.dataset_hash = bytesToHex(hash.digest());
   summary.valid =
     summary.invalid_records === 0 && summary.conflicting_labels === 0;
   summary.validation_status = summary.valid ? "Validated" : "Validation Failed";

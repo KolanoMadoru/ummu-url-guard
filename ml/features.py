@@ -38,6 +38,8 @@ SHORTENER_HOSTS = (
 )
 SHORTENERS = frozenset(host for host, _ in SHORTENER_HOSTS)
 KEYWORDS = ("login", "verify", "account", "secure", "update", "password", "signin", "banking")
+_PERCENT_ESCAPE = re.compile(r"%([0-9a-fA-F]{2})")
+_UNRESERVED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 EXTRACT = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None, include_psl_private_domains=True)
 _PSL_HASH = hashlib.sha256(files("tldextract").joinpath(".tld_set_snapshot").read_bytes()).hexdigest()
 PSL_VERSION = f"tldextract-{tldextract.__version__}:sha256:{_PSL_HASH}:private"
@@ -105,6 +107,23 @@ def normalize_url(value: str, *, max_length: int = MAX_URL_LENGTH) -> str:
 def registered_domain(host: str) -> str:
     parts = EXTRACT(host)
     return parts.top_domain_under_public_suffix or host
+
+
+def related_url_key(normalized_url: str) -> str:
+    """Group likely URL variants for leakage auditing. Keep each original row distinct."""
+    def canonical_escape(match):
+        code = match[1].upper()
+        character = chr(int(code, 16))
+        return character if character in _UNRESERVED else f"%{code}"
+
+    parts = urlsplit(normalized_url)
+    return urlunsplit((
+        "",
+        parts.netloc.removeprefix("www."),
+        _PERCENT_ESCAPE.sub(canonical_escape, parts.path).rstrip("/") or "/",
+        _PERCENT_ESCAPE.sub(canonical_escape, parts.query),
+        "",
+    ))
 
 
 def shortener_service(host: str) -> str | None:

@@ -34,6 +34,33 @@ test("rejects mismatched, repeated, and incomplete results", () => {
   assert.throws(() => parseResearchReport(report), /satu kali/);
 });
 
+test("preserves bounded automatic experiment metadata and separate validation aggregates", () => {
+  const report = researchReport();
+  report.dataset_name = "Dataset Riset (Sintetis).CSV";
+  report.scenario_kind = "heuristic";
+  report.preprocessing = {
+    source_rows: 15, valid_rows: 12, invalid_rows: 1, duplicate_rows: 2,
+    conflicting_rows: 0, url: "https://example.test/private",
+  };
+  report.results[0].error_counts = { false_positive: 1, false_negative: 0, benign: 1 };
+  report.results[0].validation_metrics = {
+    rows: 2, benign: 1, phishing: 1, accuracy: 1,
+    predictions: ["https://example.test/private"],
+  };
+  const parsed = parseResearchReport(report);
+  assert.equal(parsed.dataset_name, report.dataset_name);
+  assert.equal(parsed.scenario_kind, "heuristic");
+  assert.deepEqual(parsed.preprocessing, {
+    source_rows: 15, valid_rows: 12, invalid_rows: 1, duplicate_rows: 2, conflicting_rows: 0,
+  });
+  assert.deepEqual(parsed.results[0].error_counts, { false_positive: 1, false_negative: 0 });
+  assert.equal(parsed.results[0].validation_metrics.accuracy, 1);
+  assert.equal(parsed.results[0].metrics.accuracy, 0.5);
+  assert.doesNotMatch(JSON.stringify(parsed), /private|predictions/);
+  assert.equal(parseResearchReport({ ...report, dataset_name: "../../private.csv" }).dataset_name, null);
+  assert.equal(parseResearchReport({ ...report, scenario_kind: "verified" }).scenario_kind, null);
+});
+
 test("preserves distinct experiments and updates the selected summary", () => {
   const store = new Map();
   globalThis.localStorage = {

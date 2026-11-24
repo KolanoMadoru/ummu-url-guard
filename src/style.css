@@ -371,6 +371,21 @@ p {
 .research-import select {
   max-width: 100%;
 }
+.research-options {
+  margin-block: 16px;
+}
+.research-options summary {
+  cursor: pointer;
+}
+.research-options .actions {
+  margin-top: 12px;
+}
+.research-progress {
+  margin-top: 18px;
+}
+.actions [hidden] {
+  display: none;
+}
 .grid {
   display: grid;
   gap: 20px;

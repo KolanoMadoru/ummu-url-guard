@@ -9,6 +9,8 @@ import {
   showError,
 } from "../utils/ui.js";
 import { saveScan, getStorageWarning } from "../utils/storage.js";
+import { automaticResearch } from "../utils/automatic-research.js";
+import { predictBrowserForest } from "../utils/browser-prediction.js";
 export function render() {
   return `${heading("Pemindai URL", "Periksa indikator leksikal dan metadata HTTP publik dengan pembatasan keamanan.")}
     <section class="card"><form id="scan-form"><label for="scan-url">Masukkan URL</label><div class="input-row"><input type="url" id="scan-url" placeholder="https://example.com/login" maxlength="4096" required autocomplete="off" spellcheck="false" /><button class="button" id="scan-button"><i data-lucide="scan-line"></i> Pindai URL</button><button class="button secondary" type="reset">Hapus</button></div><p class="hint">Hanya HTTP / HTTPS. Isi halaman tidak diunduh. URL ditampilkan sebagai teks, tidak pernah dibuka.</p></form><p class="error" id="scan-error" role="alert" hidden></p><p id="scan-progress" role="status"></p></section>
@@ -33,6 +35,19 @@ export function mount() {
     progress.textContent = "Sedang memindai URL…";
     try {
       const result = await api("scan", { json: { url } });
+      const browserModel = await automaticResearch.activeModel();
+      const prediction = browserModel && predictBrowserForest(browserModel.forest, result);
+      if (prediction) {
+        Object.assign(result, prediction, {
+          available: true,
+          model_version: browserModel.version,
+          probability_label: "Estimasi phishing dari Random Forest 19 fitur di browser ini. Skor belum dikalibrasi.",
+        });
+      } else if (!result.available) {
+        result.reason = browserModel
+          ? "Model penelitian tersimpan memakai skema fitur berbeda. Jalankan kembali penelitian pada versi aplikasi ini."
+          : "Jalankan penelitian dari Manajemen Dataset untuk mengaktifkan model pada browser ini.";
+      }
       const saved = saveScan(result);
       const online = result.online;
       output.innerHTML = `<section class="card result ${result.prediction || "unavailable"}"><div class="result-heading"><i data-lucide="shield"></i><div><span class="eyebrow">HASIL PEMINDAIAN</span><h2>${escape(result.prediction ? `Prediksi ${classLabel(result.prediction)}` : "Prediksi Tidak Tersedia — model belum dilatih")}</h2></div><span class="badge">${escape(displayText(online.status))}</span></div>
@@ -66,6 +81,7 @@ export function mount() {
             ["Keterangan pemeriksaan jaringan", online.reason ? displayText(online.reason) : "Metadata HEAD diterima"],
             ["Waktu Pemindaian", result.timestamp],
             ["Versi Model", result.model_version || "Belum Tersedia"],
+            ...(prediction ? [["Model penelitian", "Random Forest · 19 fitur"]] : []),
           ],
         )}
         <p class="hint">${escape(displayText(result.probability_label || result.reason || ""))}</p>${!saved ? `<p class="error">${escape(displayText(getStorageWarning()))}</p>` : '<p class="hint">Disimpan di browser ini tanpa jalur, parameter kueri, dan fragmen.</p>'}</section>

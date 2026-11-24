@@ -1,89 +1,69 @@
 import { displayText } from "../utils/i18n.js";
-import { heading, percent, escape } from "../utils/ui.js";
-import { history, summaries } from "../utils/storage.js";
-import { chart, plot } from "../utils/charts.js";
+import { heading, percent, escape, table } from "../utils/ui.js";
+import { history } from "../utils/storage.js";
 import { renderResearchDashboard } from "../components/research-workspace.js";
-import { currentResearchReport, researchReports } from "../utils/research-reports.js";
-import { datasetStore } from "../utils/dataset-state.js";
+import { currentResearchReport } from "../utils/research-reports.js";
+import { automaticResearch } from "../utils/automatic-research.js";
+import {
+  formatResearchCount as count, researchSelectionLabel, researchStatus,
+} from "../components/automatic-research.js";
+
+function datasetStatus(snapshot) {
+  const { dataset, report, completed } = snapshot;
+  const e2 = report?.results.find((result) => result.id === "E2");
+  const counts = dataset ? [
+    ["Baris Sumber", dataset.source_rows],
+    ["Data Valid", dataset.valid_rows],
+    ["Duplikat", dataset.duplicate_rows],
+    ["Benign", dataset.benign],
+    ["Phishing", dataset.phishing],
+  ] : [];
+  const audit = dataset?.audit;
+  const split = dataset?.split;
+  return `<section class="card">
+    <div class="section-heading"><h2>Penelitian CSV</h2><a class="button secondary" href="#dataset">Manajemen Dataset</a></div>
+    <div class="status-list">
+      <span>Dataset</span><b>${researchSelectionLabel(snapshot)}</b>
+      <span>Proses</span><b>${researchStatus(snapshot)}</b>
+      <span>Audit</span><b>${audit?.passed === true ? "Tidak ditemukan kebocoran berdasarkan URL dan domain yang diperiksa." : "Belum selesai"}</b>
+      <span>Ekstraksi fitur</span><b>${completed.includes("features") ? "Selesai · 7 fitur dasar dan 19 fitur lengkap" : "Belum selesai"}</b>
+      <span>Model penelitian aktif</span><b>${e2 ? `Random Forest 19 fitur · ${escape(report.experiment_id)}` : "Belum tersedia"}</b>
+      <span>Evaluasi terakhir</span><b>${e2 ? `Akurasi data uji E2 ${percent(e2.metrics.accuracy)}` : "Belum tersedia"}</b>
+    </div>
+    ${counts.length ? table(["Dataset", "Jumlah"], counts.map(([name, n]) => [name, count(n)])) : ""}
+    ${split ? table(["Split", "Jumlah"], [["Pelatihan", count(split.train?.rows)],
+      ["Validasi", count(split.validation?.rows)], ["Pengujian", count(split.test?.rows)]]) : ""}
+    </section>`;
+}
+
 export function render(state) {
   const records = history();
-  const { summary, status } = datasetStore.get();
-  const count = (predicate) => records.filter(predicate).length;
-  const cards = [
-    ["Total URL Dipindai", records.length, "scan-line"],
-    [
-      "Prediksi Phishing",
-      count((x) => x.prediction === "phishing"),
-      "shield-alert",
-    ],
-    [
-      "Prediksi Aman",
-      count((x) => x.prediction === "benign"),
-      "shield-check",
-    ],
-    ["Tautan Pendek", count((x) => x.shortener), "link"],
-    [
-      "Indikator Typosquatting",
-      count((x) => x.typosquatting),
-      "text-cursor-input",
-    ],
-    [
-      "Akurasi Model",
-      state.health?.model_available
-        ? percent(state.health.model_metrics?.accuracy)
-        : "Model Belum Tersedia",
-      "chart-no-axes-combined",
-    ],
-  ];
-  return `${heading("Deteksi Phishing pada URL Pendek dan Domain Typosquatting", "Dasbor pemeriksaan URL dan penelitian model.", '<a class="button" href="#scanner"><i data-lucide="scan-line"></i> Pindai URL</a>')}
-    <div class="notice"><i data-lucide="info"></i><div>Hasil prediksi machine learning merupakan indikator dan bukan jaminan keamanan suatu website. Prediksi Aman menunjukkan kelas benign menurut model. URL pendek dan kemiripan domain bukan penentu phishing.</div></div>
-    <div class="stats">${cards.map(([label, value, icon]) => `<section class="stat"><div class="stat-label">${label}<i data-lucide="${icon}"></i></div><strong>${value}</strong><span>Berdasarkan aktivitas lokal atau model yang diterapkan</span></section>`).join("")}</div>
-    ${records.length ? `<div class="grid two">${plot("prediction-chart", "Distribusi Hasil Prediksi")}${plot("time-chart", "Pemindaian dari Waktu ke Waktu")}${plot("short-chart", "Proporsi URL Pendek")}${plot("typo-chart", "Indikator Typosquatting")}</div>` : '<section class="card welcome"><i data-lucide="shield-check"></i><h2>Mulai Penelitian Anda</h2><p>Belum Ada Data. Pindai URL untuk melihat fitur leksikal dan metadata jaringan, atau unggah dataset berlabel untuk melatih model.</p><div class="actions"><a class="button" href="#scanner">Buka Pemindai URL</a><a class="button secondary" href="#dataset">Unggah Dataset</a></div></section>'}
-    <section class="card"><h3>Status Aplikasi</h3><div class="status-list"><span>API Python</span><b>${state.health ? "Terhubung" : "Tidak tersedia — jalankan backend"}</b><span>Model produksi</span><b>${escape(state.health?.model_reason ? displayText(state.health.model_reason) : state.health?.model_version || "Tidak Tersedia")}</b><span>Ringkasan eksperimen tersimpan</span><b>${summaries().length + researchReports().length}</b><span>Penyimpanan riwayat</span><b>Hanya di browser ini · maksimal 200 data · URL disamarkan</b><span>Validasi CSV dalam sesi ini</span><b>${escape(displayText(status))}${summary ? ` · ${summary.valid_records.toLocaleString("id-ID")} data valid dari ${summary.total_records.toLocaleString("id-ID")}` : ""}</b></div></section>
-    ${renderResearchDashboard(currentResearchReport())}`;
+  const snapshot = automaticResearch.get();
+  return `${heading("Deteksi Phishing pada URL Pendek dan Domain Typosquatting", "Teliti deteksi phishing dari satu CSV dan gunakan model terlatih untuk memindai URL.", '<a class="button" href="#dataset">Unggah Dataset</a>')}
+    <div id="dashboard-dataset">${datasetStatus(snapshot)}</div>
+    <section class="card"><h3>Pemindai URL</h3><div class="status-list">
+      <span>Riwayat pemeriksaan</span><b>${count(records.length)}</b>
+      <span>API Python</span><b>${state.health ? "Terhubung" : "Belum terhubung"}</b>
+      <span>Model dari server</span><b>${escape(state.health?.model_version || displayText(state.health?.model_reason ?? "Tidak Tersedia"))}</b>
+    </div><div class="actions"><a class="button secondary" href="#scanner">Pindai URL</a><a class="button secondary" href="#history">Riwayat Deteksi</a></div></section>
+    <div id="dashboard-report">${renderResearchDashboard(currentResearchReport())}</div>`;
 }
+
 export function mount() {
-  const records = history();
-  if (!records.length) return;
-  chart(
-    "prediction-chart",
-    "doughnut",
-    ["Tidak Tersedia", "Phishing", "Aman (benign)"],
-    [
-      records.filter((x) => !x.prediction).length,
-      records.filter((x) => x.prediction === "phishing").length,
-      records.filter((x) => x.prediction === "benign").length,
-    ],
-  );
-  const days = {};
-  records.forEach((r) => {
-    const day = r.timestamp.slice(0, 10);
-    days[day] = (days[day] || 0) + 1;
+  const output = document.querySelector("#dashboard-dataset");
+  const summaries = document.querySelector("#dashboard-report");
+  let checkpoint = "";
+  let reportId = currentResearchReport()?.experiment_id;
+  return automaticResearch.subscribe((snapshot) => {
+    const signature = [snapshot.phase, snapshot.completed.join(","), snapshot.dataset?.hash, snapshot.report?.experiment_id].join("|");
+    if (signature !== checkpoint) {
+      checkpoint = signature;
+      output.innerHTML = datasetStatus(snapshot);
+    }
+    const report = currentResearchReport();
+    if (report?.experiment_id !== reportId) {
+      reportId = report?.experiment_id;
+      summaries.innerHTML = renderResearchDashboard(report);
+    }
   });
-  const sorted = Object.keys(days).sort();
-  chart(
-    "time-chart",
-    "line",
-    sorted,
-    sorted.map((x) => days[x]),
-    "Pemindaian URL",
-  );
-  chart(
-    "short-chart",
-    "doughnut",
-    ["Pemendek yang dikenal", "URL lainnya"],
-    [
-      records.filter((x) => x.shortener).length,
-      records.filter((x) => !x.shortener).length,
-    ],
-  );
-  chart(
-    "typo-chart",
-    "doughnut",
-    ["Indikator ditemukan", "Tanpa indikator"],
-    [
-      records.filter((x) => x.typosquatting).length,
-      records.filter((x) => !x.typosquatting).length,
-    ],
-  );
 }

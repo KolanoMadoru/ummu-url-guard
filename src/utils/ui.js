@@ -1,6 +1,5 @@
 import { errorText } from "./i18n.js";
-import { datasetStore } from "./dataset-state.js";
-import { DATASET_LIMITS, formatBytes } from "./dataset-config.js";
+import { DATASET_LIMITS } from "./dataset-config.js";
 export const escape = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -32,15 +31,4 @@ export function busy(button, status) {
 }
 export function filePicker() {
   return `<label class="file-picker" for="dataset-file">Pilih Dataset Berlabel <input class="visually-hidden" type="file" id="dataset-file" accept=".csv,text/csv" /><span class="file-select" aria-hidden="true">Pilih File</span><span>CSV UTF-8 · url,label · maksimal ${DATASET_LIMITS.maxFileBytes / 1048576} MiB untuk validasi di browser</span></label>`;
-}
-export function bindFile() {
-  const input = document.querySelector("#dataset-file");
-  const selected = document.querySelector("#selected-file");
-  if (input) input.onchange = () => datasetStore.select(input.files[0] || null);
-  return datasetStore.subscribe((data) => {
-    if (selected)
-      selected.textContent = data.file
-        ? `File Terpilih: ${data.name} · ${formatBytes(data.size)}`
-        : "Belum ada dataset terpilih. Pilih ulang file setelah memuat ulang halaman.";
-  });
 }
