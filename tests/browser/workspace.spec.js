@@ -89,15 +89,35 @@ test("research workflow, paired redirects, private history and mobile navigation
   await expect(page.locator("[data-research-status]")).toContainText("Penelitian Selesai", { timeout: 45000 });
   expect(trainingRequests).toEqual(["E1", "E2", "E3", "E4", "E5", "E6"]);
   await expect(page.getByRole("row", { name: "Data Duplikat 1" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Cakupan URL Pendek per Partisi" })).toBeVisible();
+  const coverageReady = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Unduh Cakupan URL Pendek" }).click();
+  const coverage = Papa.parse(await readFile(await (await coverageReady).path(), "utf8"),
+    { header: true, skipEmptyLines: true }).data;
+  expect(coverage).toHaveLength(shorteners.size * 3);
+  expect(coverage.filter(({ provider }) => provider === "bit.ly").map(({ split }) => split))
+    .toEqual(["train", "validation", "test"]);
   const reportReady = page.waitForEvent("download");
   await page.getByRole("button", { name: "Unduh Laporan Penelitian", exact: true }).click();
   const report = JSON.parse(await readFile(await (await reportReady).path(), "utf8"));
   expect(report.rows).toBe(urls.length - 1);
   expect(report.scenario_kind).toBe("heuristic");
   expect(report.results).toHaveLength(6);
+  expect(report.shortener_coverage.groups).toEqual({ benign: shorteners.size, phishing: shorteners.size });
+  expect(report.shortener_coverage.providers).toHaveLength(shorteners.size);
+  for (const provider of report.shortener_coverage.providers) {
+    const splits = [provider.train, provider.validation, provider.test];
+    expect(splits.filter((split) => split.benign || split.phishing)).toEqual([{ benign: 2, phishing: 2 }]);
+  }
   expect(report.experiments.every((model) => model.test_predictions.length === report.split.test.rows)).toBe(true);
   expect(report.results.every((model) => model.metrics.confusion_matrix.flat().reduce((a, b) => a + b) === report.split.test.rows)).toBe(true);
   await checkHistoricalRedirects(page, urls);
+  expect(trainingRequests).toEqual(["E1", "E2", "E3", "E4", "E5", "E6"]);
+  await expect(page.getByRole("heading", { name: "Cakupan URL Pendek per Partisi" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Positif Palsu pada URL Pendek" })).toBeVisible();
+  const shortTest = report.results.find(({ id }) => id === "E2").scenarios.pendek;
+  await expect(page.getByText(`${shortTest.confusion_matrix[0][1]} dari ${shortTest.benign}`, { exact: true }).first())
+    .toBeVisible();
   await expect(page.getByRole("heading", { name: "Evaluasi Penelitian", exact: true })).toBeVisible();
   await expect(page.getByText("Skor Pembanding pada Data Validasi")).toBeVisible();
   await expect(page.getByText("Subset dibentuk dari ciri URL.", { exact: false })).toBeVisible();
@@ -154,8 +174,37 @@ async function checkHistoricalRedirects(page, urls) {
   expect(requests.some(({ pathname }) => pathname.startsWith("/api/research/train/") || pathname === "/api/scan")).toBe(false);
   expect(requests.every(({ origin }) => origin === new URL(page.url()).origin)).toBe(true);
 
+  // Simulate a saved workspace from before shortener coverage was included.
+  await page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open("ummu-automatic-research", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction("workspace", "readwrite");
+      const store = transaction.objectStore("workspace");
+      const request = store.get("current");
+      request.onsuccess = () => {
+        const value = request.result;
+        delete value.dataset.shortenerCoverage;
+        delete value.report.shortener_coverage;
+        store.put(value, "current");
+      };
+      transaction.oncomplete = resolve;
+      transaction.onabort = () => reject(transaction.error);
+    });
+    db.close();
+    const key = "ummu_url_guard_research_reports";
+    const history = JSON.parse(localStorage.getItem(key));
+    for (const report of history.reports) delete report.shortener_coverage;
+    localStorage.setItem(key, JSON.stringify(history));
+  });
   await page.reload();
   await expect(panel.getByRole("row", { name: "Pasangan dievaluasi 2" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem("ummu_url_guard_research_reports")).reports[0].shortener_coverage?.providers?.length,
+  )).toBe(shorteners.size);
   const download = page.waitForEvent("download");
   await panel.getByRole("button", { name: "Unduh Analisis Pasangan JSON" }).click();
   const exported = await readFile(await (await download).path(), "utf8");

@@ -5,6 +5,7 @@ import {
   prepareAutomaticData,
   readAutomaticCSV,
   splitAutomaticData,
+  summarizeShortenerCoverage,
 } from "../src/utils/automatic-data.js";
 
 const csv = (source) => new File([source], "synthetic.csv");
@@ -133,6 +134,44 @@ test("oversized provider prefixes stay together with a split imbalance warning",
   assert.equal(split.summary.train.shorteners, 92);
   assert.equal(split.summary.validation.shorteners + split.summary.test.shorteners, 0);
   assert.ok(split.summary.warnings.length > 0);
+  const coverage = summarizeShortenerCoverage(prepared.rows, split);
+  assert.deepEqual(coverage.providers, [{
+    name: "t.ly",
+    train: { benign: 46, phishing: 46 },
+    validation: { benign: 0, phishing: 0 },
+    test: { benign: 0, phishing: 0 },
+  }]);
+  assert.deepEqual(coverage.groups, { benign: 1, phishing: 1 });
+  assert.match(coverage.warnings.join("\n"), /benign hanya berasal dari 1 kelompok/u);
+  assert.match(coverage.warnings.join("\n"), /benign tidak tersedia pada data validasi, uji/u);
+});
+
+test("shortener coverage distinguishes providers, labels, and independent groups", () => {
+  const rows = [
+    { provider: "psce.pw", label: 0, group: 0 },
+    { provider: "psce.pw", label: 0, group: 0 },
+    { provider: "psce.pw", label: 1, group: 0 },
+    { provider: "tinyurl.com", label: 0, group: 3 },
+    { provider: "t.ly", label: 1, group: 4 },
+    { provider: null, label: 0, group: 5 },
+  ];
+  const coverage = summarizeShortenerCoverage(rows, { train: [0, 1, 2], validation: [5], test: [3, 4] });
+  assert.deepEqual(coverage.providers, [
+    { name: "psce.pw", train: { benign: 2, phishing: 1 }, validation: { benign: 0, phishing: 0 }, test: { benign: 0, phishing: 0 } },
+    { name: "t.ly", train: { benign: 0, phishing: 0 }, validation: { benign: 0, phishing: 0 }, test: { benign: 0, phishing: 1 } },
+    { name: "tinyurl.com", train: { benign: 0, phishing: 0 }, validation: { benign: 0, phishing: 0 }, test: { benign: 1, phishing: 0 } },
+  ]);
+  assert.deepEqual(coverage.groups, { benign: 2, phishing: 2 });
+  assert.match(coverage.warnings.join("\n"), /benign tidak tersedia pada data validasi/u);
+  assert.match(coverage.warnings.join("\n"), /benign pada data uji berasal dari satu kelompok/u);
+});
+
+test("shortener coverage has no provider rows for an ordinary URL dataset", () => {
+  const coverage = summarizeShortenerCoverage(
+    [{ provider: null, label: 0, group: 0 }],
+    { train: [0], validation: [], test: [] },
+  );
+  assert.deepEqual(coverage, { providers: [], groups: { benign: 0, phishing: 0 }, warnings: [] });
 });
 
 test("split cannot be fabricated when a label is confined to two groups", () => {

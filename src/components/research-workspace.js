@@ -30,6 +30,25 @@ export function distribution(label, values) {
   ]));
 }
 
+export function renderShortenerCoverage(coverage) {
+  if (!coverage) return "";
+  const parts = Object.entries(partitions);
+  const { providers, groups, warnings } = coverage;
+  return `<section aria-label="Cakupan URL Pendek per Partisi">
+    <h4>Cakupan URL Pendek per Partisi</h4>
+    <p>Kelompok independen yang memuat URL pendek benign <strong>${formatted(groups.benign)}</strong> dan phishing <strong>${formatted(groups.phishing)}</strong>. Satu kelompok dapat memuat kedua label.</p>
+    <p class="hint">URL dengan domain terdaftar yang sama tetap berada di satu partisi. Menambah tautan dari domain yang sama memperbanyak sampel dalam kelompok itu.</p>
+    ${providers.length ? table(
+      ["Penyedia", ...parts.flatMap(([, label]) => [`${label} benign`, `${label} phishing`])],
+      providers.map((provider) => [provider.name, ...parts.flatMap(([part]) => [
+        formatted(provider[part].benign), formatted(provider[part].phishing),
+      ])]),
+    ) : "<p>Tidak ada URL pendek yang teridentifikasi dalam dataset.</p>"}
+    ${warnings.length ? `<ul class="notice">${warnings.map((warning) => `<li>${escape(warning)}</li>`).join("")}</ul>
+      <p class="hint">Jika cakupan benign terbatas, tambahkan URL pendek benign terverifikasi dari penyedia lain.</p>` : ""}
+    </section>`;
+}
+
 export function renderResearchImport() {
   return `<details class="card research-import">
     <summary>Ringkasan Penelitian Tersimpan</summary>
@@ -170,6 +189,28 @@ const subsetRows = (report) => {
 const shortenerRows = (report) => report.results.flatMap((result) => Object.entries(result.shortener_scenarios)
   .map(([provider, score]) => [result.id, provider, score]));
 
+function benignCounts(score) {
+  const negatives = score?.confusion_matrix?.[0];
+  const benign = negatives ? negatives[0] + negatives[1] : score?.benign ?? null;
+  return {
+    falsePositives: negatives?.[1] ?? (benign === 0 ? 0 : null),
+    benign,
+  };
+}
+
+function renderShortenerFalsePositives(results) {
+  if (!results.some((result) => result.scenarios.pendek)) return "";
+  return `<section aria-label="Positif Palsu pada URL Pendek">
+    <h4>Positif Palsu pada URL Pendek</h4>
+    <p class="hint">Positif palsu adalah URL pendek berlabel benign yang diprediksi sebagai phishing. Jika jumlah benign yang diuji kecil, satu kesalahan dapat mengubah persentase secara besar.</p>
+    ${table(["ID", "Positif Palsu dari Sampel Benign Uji", "Tingkat Positif Palsu"], results.map((result) => {
+      const { falsePositives, benign } = benignCounts(result.scenarios.pendek);
+      const count = falsePositives == null ? "Tidak Tersedia" : `${formatted(falsePositives)} dari ${formatted(benign)}`;
+      return [result.id, count, percent(benign && falsePositives != null ? falsePositives / benign : null)];
+    }))}
+    </section>`;
+}
+
 export function renderResearchEvaluation(report) {
   if (!report) return "";
   const subsets = subsetRows(report);
@@ -205,10 +246,12 @@ export function renderResearchEvaluation(report) {
       .map(([key, n]) => [Object.hasOwn(coverageLabels, key) ? coverageLabels[key] : key.replaceAll("_", " "), formatted(n)])) : ""}
     ${report.psl_version ? `<p class="hint">Versi Public Suffix List <code>${escape(report.psl_version)}</code></p>` : ""}
     </details>
+    ${renderShortenerCoverage(report.shortener_coverage)}
     <h3>Evaluasi per Skenario pada Data Uji</h3>
     ${report.scenario_kind === "heuristic" ? '<p class="hint">Subset dibentuk dari ciri URL. Subset dapat bertumpang tindih. Indikasi kemiripan merek belum diverifikasi secara independen. Tujuan redirect historis tidak diketahui.</p>' : ""}
     <p class="hint">Metrik yang memerlukan kedua kelas, seperti ROC-AUC, hanya dapat dihitung jika benign dan phishing tersedia.</p>
     ${subsets.length ? groupedMetrics("Skenario", subsets) : "<p>Kategori penelitian belum tersedia pada data uji.</p>"}
+    ${renderShortenerFalsePositives(report.results)}
     ${shorteners.length ? `<h3>Evaluasi per Layanan Pemendek</h3>${groupedMetrics("Layanan", shorteners)}` : ""}
     <h3>Matriks Kebingungan</h3><p class="hint">Matriks menggunakan baris kelas aktual dan kolom prediksi.</p>
     ${table(["ID", "Negatif Benar", "Positif Palsu", "Negatif Palsu", "Positif Benar"], report.results
@@ -253,21 +296,26 @@ export function mountResearchEvaluation(report) {
       ...Object.entries(result.scenarios).map(([key, score]) => ["skenario", key, score]),
       ...Object.entries(result.shortener_scenarios).map(([key, score]) => ["layanan", key, score]),
       ...(result.validation_metrics ? [["validasi", "global", result.validation_metrics]] : []),
-    ].map(([scope, group, score]) => ({
-      experiment_id: report.experiment_id,
-      dataset_hash: report.dataset_hash,
-      id: result.id,
-      model_name: result.model_name,
-      feature_set: result.feature_set,
-      scope,
-      group,
-      scenario_kind: report.scenario_kind,
-      partition: scope === "validasi" ? "validation" : "test",
-      train_seconds: result.train_seconds,
-      prediction_seconds: result.prediction_seconds,
-      ...score,
-      confusion_matrix: score.confusion_matrix == null ? null : JSON.stringify(score.confusion_matrix),
-    })));
+    ].map(([scope, group, score]) => {
+      const { falsePositives, benign } = benignCounts(score);
+      return {
+        experiment_id: report.experiment_id,
+        dataset_hash: report.dataset_hash,
+        id: result.id,
+        model_name: result.model_name,
+        feature_set: result.feature_set,
+        scope,
+        group,
+        scenario_kind: report.scenario_kind,
+        partition: scope === "validasi" ? "validation" : "test",
+        train_seconds: result.train_seconds,
+        prediction_seconds: result.prediction_seconds,
+        ...score,
+        false_positive_count: falsePositives,
+        benign_for_false_positive_rate: benign,
+        confusion_matrix: score.confusion_matrix == null ? null : JSON.stringify(score.confusion_matrix),
+      };
+    }));
     download("research-metrics.csv", csv(rows), "text/csv");
   };
 }

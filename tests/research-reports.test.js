@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { researchReport } from "./fixtures/research-report.js";
+import { renderResearchEvaluation } from "../src/components/research-workspace.js";
 import {
   parseResearchReport,
   importResearchReport,
@@ -61,6 +62,46 @@ test("preserves bounded automatic experiment metadata and separate validation ag
   assert.equal(parseResearchReport({ ...report, scenario_kind: "verified" }).scenario_kind, null);
 });
 
+test("keeps shortener coverage bounded and renders false positives with actual denominators", () => {
+  const report = researchReport();
+  report.shortener_coverage = {
+    providers: [
+      {
+        name: "T.LY",
+        train: { benign: 2, phishing: 1, private_url: "https://example.test/token" },
+        validation: { benign: 0, phishing: 0 },
+        test: { benign: 0, phishing: 0 },
+      },
+      {
+        name: "bit.ly",
+        train: { benign: 0, phishing: 0 },
+        validation: { benign: 0, phishing: 0 },
+        test: { benign: 1, phishing: 1 },
+      },
+    ],
+    groups: { benign: 2, phishing: 2 },
+    warnings: ["Penyedia URL pendek terbatas.", "<script>", "https://example.test/token"],
+  };
+  for (const result of report.results) result.scenarios.pendek = result.metrics;
+  const parsed = parseResearchReport(report);
+  assert.equal(parsed.shortener_coverage.providers[0].name, "t.ly");
+  assert.deepEqual(parsed.shortener_coverage.warnings, ["Penyedia URL pendek terbatas."]);
+  assert.deepEqual(parsed.shortener_coverage.providers[0].train, { benign: 2, phishing: 1 });
+  assert.doesNotMatch(JSON.stringify(parsed.shortener_coverage), /https:\/\/|<script>/);
+  const view = renderResearchEvaluation(parsed);
+  assert.match(view, /Pengujian benign/);
+  assert.match(view, /Penyedia URL pendek terbatas/);
+  assert.match(view, /<td>E1<\/td><td>1 dari 1<\/td><td>100\.0%<\/td>/);
+  report.shortener_coverage.providers[0].train.benign = 5;
+  assert.equal(parseResearchReport(report).shortener_coverage, null);
+
+  const withoutShortBenign = researchReport();
+  for (const result of withoutShortBenign.results)
+    result.scenarios.pendek = { rows: 1, benign: 0, phishing: 1, confusion_matrix: [[0, 0], [0, 1]] };
+  assert.match(renderResearchEvaluation(parseResearchReport(withoutShortBenign)),
+    /<td>E2<\/td><td>0 dari 0<\/td><td>Tidak Tersedia<\/td>/);
+});
+
 test("preserves distinct experiments and updates the selected summary", () => {
   const store = new Map();
   globalThis.localStorage = {
@@ -72,6 +113,14 @@ test("preserves distinct experiments and updates the selected summary", () => {
   assert.equal(importResearchReport(researchReport("second-test")), true);
   const conflicting = { ...first, dataset_hash: "2".repeat(64) };
   assert.throws(() => importResearchReport(conflicting), /isi berbeda/);
+  const coverage = { providers: [], groups: { benign: 0, phishing: 0 }, warnings: [] };
+  const enriched = { ...first, shortener_coverage: coverage };
+  assert.throws(() => importResearchReport(enriched), /isi berbeda/);
+  assert.throws(() => importResearchReport({ ...conflicting, shortener_coverage: coverage },
+    { allowCoverageEnrichment: true }), /isi berbeda/);
+  assert.equal(importResearchReport(enriched, { allowCoverageEnrichment: true }), true);
+  assert.deepEqual(currentResearchReport().shortener_coverage, coverage);
+  assert.throws(() => importResearchReport(first, { allowCoverageEnrichment: true }), /isi berbeda/);
   selectResearchReport(first.experiment_id);
   assert.equal(currentResearchReport().experiment_id, "first-test");
   assert.equal(researchReports().length, 2);

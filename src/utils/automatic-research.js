@@ -35,7 +35,7 @@ function initialize() {
         activeModel = data.model;
       } else if (data.type === "report") {
         try {
-          importResearchReport(data.report);
+          importResearchReport(data.report, { allowCoverageEnrichment: true });
         } catch {
           publish({ ...snapshot, storageWarning: "Ringkasan belum bisa disimpan di daftar riwayat." });
         }

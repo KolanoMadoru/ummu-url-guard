@@ -8,7 +8,7 @@ import {
   renderResearchProgress, renderStageButtons, researchStages, selectResearchFile,
   selectedResearchFile,
 } from "../components/automatic-research.js";
-import { distribution, mountResearchImport, renderResearchImport } from "../components/research-workspace.js";
+import { distribution, mountResearchImport, renderResearchImport, renderShortenerCoverage } from "../components/research-workspace.js";
 
 export function render() {
   return `${heading("Manajemen Dataset", "Unggah satu CSV berlabel dan jalankan penelitian dari validasi hingga evaluasi.")}
@@ -38,6 +38,7 @@ export function render() {
       <div class="actions">
         <button class="button secondary" type="button" data-research-export="issues" disabled>Unduh Laporan Data yang Tidak Digunakan</button>
         <button class="button secondary" type="button" data-research-export="split" disabled>Unduh Pembagian Dataset</button>
+        <button class="button secondary" type="button" data-research-export="shortener-coverage" hidden disabled>Unduh Cakupan URL Pendek</button>
         <button class="button secondary" type="button" data-research-export="basic" disabled>Unduh 7 Fitur Dasar</button>
         <button class="button secondary" type="button" data-research-export="extended" disabled>Unduh 19 Fitur Lengkap</button>
         <button class="button" type="button" data-research-export="results" disabled>Unduh Laporan Penelitian</button>
@@ -93,12 +94,14 @@ function renderSplit(dataset) {
     ${table(["Split", "Fungsi", "Data", "Rasio Aktual", "Kelompok", "Benign", "Phishing", "Tautan Pendek"], rows)}
     <p class="hint">Target 70% pelatihan, 15% validasi, dan 15% pengujian dengan seed 42. Kelompok terkait tetap utuh. Tujuan tautan pendek tidak diketahui dari CSV.</p>
     ${warnings?.length ? `<ul class="notice">${warnings.map((warning) => `<li>${escape(warning)}</li>`).join("")}</ul>` : ""}
+    ${renderShortenerCoverage(dataset.shortenerCoverage)}
     </section>`;
 }
 
 const exportFiles = {
   issues: ["data-tidak-digunakan.csv", "text/csv", "prepare"],
   split: ["pembagian-dataset.csv", "text/csv", "split"],
+  "shortener-coverage": ["cakupan-url-pendek.csv", "text/csv", "split"],
   basic: ["fitur-dasar.csv", "text/csv", "features"],
   extended: ["fitur-lengkap.csv", "text/csv", "features"],
   results: ["laporan-penelitian.json", "application/json", "evaluate"],
@@ -170,7 +173,8 @@ export function mount() {
     for (const button of exportButtons) {
       const kind = button.dataset.researchExport;
       const stage = exportFiles[kind][2];
-      button.disabled = busy || Boolean(exporting) ||
+      if (kind === "shortener-coverage") button.hidden = !snapshot.dataset?.shortenerCoverage;
+      button.disabled = button.hidden || busy || Boolean(exporting) ||
         !(snapshot.completed.includes(stage) || (kind === "issues" && snapshot.dataset));
     }
     if (renderedReport !== snapshot.report?.experiment_id) {

@@ -117,6 +117,9 @@ def test_scan_does_not_use_a_blocked_or_unconfirmed_destination(client, monkeypa
     result = response.json()
     assert result['online']['status'] == 'unavailable'
     assert reason in result['online']['reason']
+    assert result['online']['observed_url'] == (
+        'https://destination.example/login' if isinstance(second_response, socket.timeout) else None
+    )
     assert result['destination'] is None
     assert result['features'] == client.post('/api/features', json={'url': initial_url}).json()['features']
     assert head.call_count == head_calls
@@ -126,10 +129,22 @@ def test_scan_does_not_report_the_shortener_itself_as_a_destination(client, monk
     monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
     monkeypatch.setattr(scanner.socket, 'getaddrinfo', lambda *_a, **_kw: dns_response('93.184.216.34'))
     monkeypatch.setattr(scanner, 'pinned_head', Mock(return_value=(200, None)))
+    monkeypatch.setattr(scanner, 'pinned_get', Mock(return_value=(200, None)))
     result = client.post('/api/scan', json={'url': 'https://t.ly/token', 'check_redirect': True}).json()
     assert result['online']['status'] == 'no_redirect'
     assert result['online']['final_url'] is None
     assert result['destination'] is None
+
+
+def test_scan_returns_a_redirect_recovered_with_get_headers(client, monkeypatch):
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
+    monkeypatch.setattr(scanner.socket, 'getaddrinfo', lambda *_a, **_kw: dns_response('93.184.216.34'))
+    monkeypatch.setattr(scanner, 'pinned_head', Mock(side_effect=[(405, None), (200, None)]))
+    monkeypatch.setattr(scanner, 'pinned_get', Mock(return_value=(302, 'https://destination.example/landing')))
+    result = client.post('/api/scan', json={'url': 'https://t.ly/token', 'check_redirect': True}).json()
+    assert result['online']['status'] == 'complete'
+    assert result['online']['chain'][0]['method'] == 'GET'
+    assert result['destination']['url'] == 'https://destination.example/landing'
 
 
 def test_analyze_and_train(client, research_csv):

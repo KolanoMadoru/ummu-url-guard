@@ -70,6 +70,33 @@ function safeCounts(value, knownKeys) {
     }),
   );
 }
+
+function safeShortenerCoverage(value, split) {
+  if (!Array.isArray(value?.providers)) return null;
+  const partNames = Object.keys(partitions);
+  const labels = ["benign", "phishing"];
+  const groups = safeCounts(value.groups, labels);
+  if (!labels.every((label) => Object.hasOwn(groups, label))) return null;
+  const seen = new Set();
+  const providers = [];
+  for (const provider of value.providers.slice(0, 100)) {
+    const name = typeof provider?.name === "string" && /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/iu.test(provider.name)
+      ? token(provider.name.toLowerCase()) : null;
+    if (!name || seen.has(name)) return null;
+    const counts = Object.fromEntries(partNames.map((part) => [part, safeCounts(provider[part], labels)]));
+    if (!partNames.every((part) => labels.every((label) => Object.hasOwn(counts[part], label)))) return null;
+    seen.add(name);
+    providers.push({ name, ...counts });
+  }
+  if (!partNames.every((part) => labels.every((label) =>
+    providers.reduce((total, provider) => total + provider[part][label], 0) <= split[part][label]))) return null;
+  const warnings = Array.isArray(value.warnings) ? value.warnings
+    .slice(0, 20)
+    .filter((warning) => typeof warning === "string" && warning.trim() && warning.length <= 300 &&
+      !/[\x00-\x1f\x7f<>]|https?:\/\//iu.test(warning)) : [];
+  return { providers, groups, warnings };
+}
+
 function safeMetrics(value) {
   const matrix = value?.confusion_matrix;
   const validMatrix = Array.isArray(matrix) && matrix.length === 2 &&
@@ -152,6 +179,7 @@ export function parseResearchReport(report) {
     categories: safeCounts(report.categories, [...Object.keys(categories), "unknown"]),
     sources: safeCounts(report.sources),
     shorteners: safeCounts(report.shorteners),
+    shortener_coverage: safeShortenerCoverage(report.shortener_coverage, split),
     audit: {
       status: "passed",
       metadata: report.audit.metadata === true,
@@ -201,12 +229,17 @@ function saveReports(active, reports) {
     return false;
   }
 }
-export function importResearchReport(value) {
+export function importResearchReport(value, { allowCoverageEnrichment = false } = {}) {
   const report = parseResearchReport(value);
   const id = report.experiment_id;
   const previous = researchReports().find((item) => item.experiment_id === id);
-  if (previous && JSON.stringify(previous) !== JSON.stringify(report))
-    throw new Error("ID eksperimen yang sama sudah tersimpan dengan isi berbeda.");
+  if (previous && JSON.stringify(previous) !== JSON.stringify(report)) {
+    const addsCoverageOnly = allowCoverageEnrichment && previous.shortener_coverage == null &&
+      report.shortener_coverage != null &&
+      JSON.stringify(previous) === JSON.stringify({ ...report, shortener_coverage: null });
+    if (!addsCoverageOnly)
+      throw new Error("ID eksperimen yang sama sudah tersimpan dengan isi berbeda.");
+  }
   return saveReports(id, [
     report, ...researchReports().filter((item) => item.experiment_id !== id),
   ].slice(0, MAX_REPORTS));
