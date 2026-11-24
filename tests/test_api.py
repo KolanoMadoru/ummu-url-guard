@@ -1,9 +1,12 @@
 import hashlib
+import socket
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from api import index
+from ml import scanner
 
 
 @pytest.fixture
@@ -24,8 +27,9 @@ def test_health_features_and_model_unavailable(client):
 def test_scan_prediction_survives_online_failure(client, monkeypatch):
     monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
     monkeypatch.setattr(index, 'scan_url', lambda u: {'status': 'unavailable', 'reason': 'DNS resolution failed.', 'redirect_count': 0})
-    result = client.post('/api/scan', json={'url': 'https://example.com'}).json()
+    result = client.post('/api/scan', json={'url': 'https://t.ly/example', 'check_redirect': True}).json()
     assert result['online']['status'] == 'unavailable' and result['features']['url_length'] > 0
+    assert result['destination'] is None
     assert 'guarantee' in result['disclaimer']
 
 
@@ -38,6 +42,94 @@ def test_scan_defaults_to_offline_and_shares_the_original_url_features(client, m
     assert scan['online']['status'] == 'disabled'
     assert scan['features'] == features['features']
     assert scan['features']['url_length'] == len(payload['url'])
+
+
+@pytest.mark.parametrize(('enabled', 'payload', 'status'), [
+    ('0', {'url': 'https://t.ly/token', 'check_redirect': True}, 'disabled'),
+    ('1', {'url': 'https://t.ly/token'}, 'not_requested'),
+    ('1', {'url': 'https://t.ly/?q=token', 'check_redirect': True}, 'not_applicable'),
+    ('1', {'url': 'https://example.com/token', 'check_redirect': True}, 'not_applicable'),
+])
+def test_scan_requires_explicit_opt_in_and_a_known_token(client, monkeypatch, enabled, payload, status):
+    head = Mock(side_effect=AssertionError('HEAD must not be called'))
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', enabled)
+    monkeypatch.setattr(index, 'scan_url', head)
+    response = client.post('/api/scan', json=payload)
+    assert response.status_code == 200
+    result = response.json()
+    assert result['online']['status'] == status
+    assert result['destination'] is None
+    assert result['initial_url'] == payload['url']
+    assert len(result['features']) == 19
+    head.assert_not_called()
+
+
+def test_scan_rejects_a_non_boolean_redirect_opt_in(client, monkeypatch):
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
+    head = Mock(side_effect=AssertionError('HEAD must not be called'))
+    monkeypatch.setattr(index, 'scan_url', head)
+    assert client.post('/api/scan', json={'url': 'https://t.ly/token', 'check_redirect': 'true'}).status_code == 422
+    head.assert_not_called()
+
+
+def dns_response(address):
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (address, 443))]
+
+
+def test_scan_extracts_initial_and_observed_destination_with_same_feature_schema(client, monkeypatch):
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
+    monkeypatch.setattr(scanner.socket, 'getaddrinfo', lambda *_a, **_kw: dns_response('93.184.216.34'))
+    destination_url = 'https://destination.example/login/123?a=1'
+    head = Mock(side_effect=[(302, destination_url), (200, None)])
+    monkeypatch.setattr(scanner, 'pinned_head', head)
+    initial_url = 'HTTPS://T.LY:443/Token'
+    response = client.post('/api/scan', json={'url': initial_url, 'check_redirect': True})
+    assert response.status_code == 200
+    result = response.json()
+    destination = result['destination']
+    assert result['initial_url'] == initial_url
+    assert result['features'] == client.post('/api/features', json={'url': initial_url}).json()['features']
+    assert destination['features'] == client.post('/api/features', json={'url': destination_url}).json()['features']
+    assert result['features']['shortener'] == 1
+    assert destination['features']['shortener'] == 0
+    assert result['basic_features'] == list(index.BASIC_FEATURES)
+    assert destination['schema_version'] == result['schema_version']
+    assert result['online']['redirect_count'] == 1
+    assert result['online']['status'] == 'complete'
+    assert destination['url'] == destination_url
+    assert 'prediction' in destination and 'model_version' in destination
+    assert [call.args[0] for call in head.call_args_list] == ['https://t.ly/Token', destination_url]
+
+
+@pytest.mark.parametrize(('second_response', 'address', 'reason', 'head_calls'), [
+    ((200, None), '10.0.0.1', 'blocked', 1),
+    ((200, None), '169.254.169.254', 'blocked', 1),
+    (socket.timeout(), '93.184.216.34', 'timed out', 2),
+])
+def test_scan_does_not_use_a_blocked_or_unconfirmed_destination(client, monkeypatch, second_response, address, reason, head_calls):
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
+    monkeypatch.setattr(scanner.socket, 'getaddrinfo', lambda host, *_a, **_kw: dns_response('93.184.216.34' if host == 't.ly' else address))
+    head = Mock(side_effect=[(302, 'https://destination.example/login'), second_response])
+    monkeypatch.setattr(scanner, 'pinned_head', head)
+    initial_url = 'https://t.ly/token'
+    response = client.post('/api/scan', json={'url': initial_url, 'check_redirect': True})
+    assert response.status_code == 200
+    result = response.json()
+    assert result['online']['status'] == 'unavailable'
+    assert reason in result['online']['reason']
+    assert result['destination'] is None
+    assert result['features'] == client.post('/api/features', json={'url': initial_url}).json()['features']
+    assert head.call_count == head_calls
+
+
+def test_scan_does_not_report_the_shortener_itself_as_a_destination(client, monkeypatch):
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
+    monkeypatch.setattr(scanner.socket, 'getaddrinfo', lambda *_a, **_kw: dns_response('93.184.216.34'))
+    monkeypatch.setattr(scanner, 'pinned_head', Mock(return_value=(200, None)))
+    result = client.post('/api/scan', json={'url': 'https://t.ly/token', 'check_redirect': True}).json()
+    assert result['online']['status'] == 'no_redirect'
+    assert result['online']['final_url'] is None
+    assert result['destination'] is None
 
 
 def test_analyze_and_train(client, research_csv):

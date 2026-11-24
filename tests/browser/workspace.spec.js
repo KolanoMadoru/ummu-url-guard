@@ -1,7 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { test, expect } from "@playwright/test";
+import Papa from "papaparse";
 
-test("research workflow, private history, charts and mobile navigation", async ({
+const shorteners = new Set([
+  "bit.ly", "cutt.ly", "flyn.co", "is.gd", "ln.run", "q-r.to", "qrco.de",
+  "rebrand.ly", "s.id", "short-url.cc", "t.co", "t.ly", "tinyurl.com",
+]);
+
+test("research workflow, paired redirects, private history and mobile navigation", async ({
   page,
 }) => {
   const errors = [];
@@ -61,15 +67,18 @@ test("research workflow, private history, charts and mobile navigation", async (
   await expect(page.getByText("Belum ada riwayat yang sesuai.")).toBeVisible();
   await nav("Manajemen Dataset").click();
   // Generated synthetic URLs exercise software behavior only.
-  const rows = ["url,label"];
+  const urls = [];
   for (let i = 0; i < 100; i++) {
-    rows.push(`https://group${i}.example/about,0`);
-    rows.push(`https://login.group${i}.example/verify?name=private,1`);
+    urls.push({ url: `https://group${i}.example/about`, label: 0 });
+    urls.push({ url: `https://login.group${i}.example/verify?name=private`, label: 1 });
   }
-  rows.push("https://group0.example/about,0");
+  for (const host of shorteners)
+    for (const index of [0, 1, 2, 3])
+      urls.push({ url: `https://${host}/synthetic-${index}?token=private-original`, label: index % 2 });
+  urls.push(urls[0]);
   await page.locator("#dataset-file").setInputFiles({
     name: "synthetic-test-only.csv", mimeType: "text/csv",
-    buffer: Buffer.from(rows.join("\n")),
+    buffer: Buffer.from(Papa.unparse(urls)),
   });
   const trainingRequests = [];
   page.on("request", (request) => {
@@ -83,16 +92,15 @@ test("research workflow, private history, charts and mobile navigation", async (
   const reportReady = page.waitForEvent("download");
   await page.getByRole("button", { name: "Unduh Laporan Penelitian", exact: true }).click();
   const report = JSON.parse(await readFile(await (await reportReady).path(), "utf8"));
-  expect(report.rows).toBe(200);
+  expect(report.rows).toBe(urls.length - 1);
   expect(report.scenario_kind).toBe("heuristic");
   expect(report.results).toHaveLength(6);
   expect(report.experiments.every((model) => model.test_predictions.length === report.split.test.rows)).toBe(true);
   expect(report.results.every((model) => model.metrics.confusion_matrix.flat().reduce((a, b) => a + b) === report.split.test.rows)).toBe(true);
-  await nav("Evaluasi Model").click();
+  await checkHistoricalRedirects(page, urls);
   await expect(page.getByRole("heading", { name: "Evaluasi Penelitian", exact: true })).toBeVisible();
   await expect(page.getByText("Skor Pembanding pada Data Validasi")).toBeVisible();
   await expect(page.getByText("Subset dibentuk dari ciri URL.", { exact: false })).toBeVisible();
-  await page.reload();
   await expect(page.getByRole("heading", { name: "Evaluasi Penelitian", exact: true })).toBeVisible();
   await nav("Analisis Hasil").click();
   await expect(page.locator("#research-f1")).toBeVisible();
@@ -108,3 +116,50 @@ test("research workflow, private history, charts and mobile navigation", async (
   await expect(page.getByLabel("Masukkan URL")).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+async function checkHistoricalRedirects(page, urls) {
+  const splitDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Unduh Pembagian Dataset" }).click();
+  const split = Papa.parse(await readFile(await (await splitDownload).path(), "utf8"),
+    { header: true, skipEmptyLines: true }).data;
+  const inputURL = ({ row }) => urls[Number(row) - 2].url;
+  const trainingRow = split.find(({ split }) => split === "train");
+  const heldOut = split.filter((entry) =>
+    entry.split === "test" && shorteners.has(new URL(inputURL(entry)).hostname));
+  expect(heldOut.length).toBeGreaterThanOrEqual(3);
+  const overlap = `https://${new URL(inputURL(trainingRow)).hostname}/other-path`;
+  const evidence = heldOut.slice(0, 3).map((entry, i) => ({
+    row: entry.row,
+    url_awal: inputURL(entry),
+    url_tujuan: i === 2 ? overlap : `https://synthetic-destination-${i}.example/path?token=private-destination`,
+    sumber: "Arsip sintetis A",
+  }));
+
+  const requests = [];
+  page.on("request", (request) => requests.push(new URL(request.url())));
+  await page.getByRole("link", { name: "Evaluasi Model", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Hasil Utama pada Data Uji" })).toBeVisible();
+  const panel = page.locator("#redirect-research-panel");
+  await panel.getByLabel("Pilih Bukti Redirect CSV").setInputFiles({
+    name: "synthetic-evidence.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(Papa.unparse(evidence)),
+  });
+  await panel.getByRole("button", { name: "Bandingkan Pasangan Redirect" }).click();
+  await expect(panel.getByRole("row", { name: "Pasangan dievaluasi 2" })).toBeVisible();
+  await expect(panel.getByRole("row", { name: "Tujuan terkait dengan data latih atau validasi 1" })).toBeVisible();
+  await expect(panel.getByRole("row", { name: "Arsip sintetis A 2" })).toBeVisible();
+  await expect(panel.getByRole("row", { name: "Jumlah pasangan 2 2" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Hasil Utama pada Data Uji" })).toBeVisible();
+  expect(requests.some(({ pathname }) => pathname.startsWith("/api/research/train/") || pathname === "/api/scan")).toBe(false);
+  expect(requests.every(({ origin }) => origin === new URL(page.url()).origin)).toBe(true);
+
+  await page.reload();
+  await expect(panel.getByRole("row", { name: "Pasangan dievaluasi 2" })).toBeVisible();
+  const download = page.waitForEvent("download");
+  await panel.getByRole("button", { name: "Unduh Analisis Pasangan JSON" }).click();
+  const exported = await readFile(await (await download).path(), "utf8");
+  expect(exported).toContain("Arsip sintetis A");
+  expect(exported).not.toContain("private-original");
+  expect(exported).not.toContain("private-destination");
+}
