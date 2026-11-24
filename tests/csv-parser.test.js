@@ -86,7 +86,6 @@ test("long HTTP URLs remain valid in browser review and require local training",
   assert.equal(summary.valid, true);
   assert.equal(summary.urls_over_online_limit, 1);
   assert.equal(trainingEligibility({ file: input, status: "Validated", summary }).eligible, false);
-  assert.throws(() => normalizeDatasetURL(`https://example.test/${"a".repeat(DATASET_LIMITS.maxURLLength)}`));
 });
 test("audits metadata fields locally without keeping metadata values", async () => {
   const source = [
@@ -209,7 +208,7 @@ test("rejects URL credentials, non-http schemes, controls, invalid hosts and lon
     "https://example.com\\@localhost",
     "no-scheme",
     "https://%31%32%37.0.0.1",
-    "https://x.com/" + "x".repeat(4096),
+    "https://x.com/" + "x".repeat(DATASET_LIMITS.maxURLLength),
   ])
     assert.throws(() => normalizeDatasetURL(url));
 });
