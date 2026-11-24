@@ -3,6 +3,7 @@ import { importResearchReport } from "./research-reports.js";
 const initial = () => ({
   phase: "loading", stage: null, completed: [], dataset: null,
   progress: null, report: null, error: "", storageWarning: "",
+  redirectComparisonReady: false, redirectComparisonRunning: false, redirectComparison: null,
 });
 let snapshot = initial();
 let worker;
@@ -10,7 +11,7 @@ let ready;
 let activeModel = null;
 let sequence = 0;
 const listeners = new Set();
-const exportsPending = new Map();
+const pendingRequests = new Map();
 
 function publish(update) {
   snapshot = update;
@@ -40,17 +41,17 @@ function initialize() {
         }
       } else if (data.type === "ready") {
         resolve();
-      } else if (data.type === "export" || data.type === "reset") {
-        const pending = exportsPending.get(data.id);
-        exportsPending.delete(data.id);
+      } else if (["export", "reset", "redirectComparison"].includes(data.type)) {
+        const pending = pendingRequests.get(data.id);
+        pendingRequests.delete(data.id);
         if (data.error) pending?.reject(new Error(data.error));
         else pending?.resolve(data.content);
       }
     };
     worker.onerror = () => {
       publish({ ...snapshot, phase: "failed", error: "Proses penelitian terhenti. Muat ulang untuk melanjutkan dari tahap tersimpan." });
-      for (const pending of exportsPending.values()) pending.reject(new Error(snapshot.error));
-      exportsPending.clear();
+      for (const pending of pendingRequests.values()) pending.reject(new Error(snapshot.error));
+      pendingRequests.clear();
       worker.terminate();
       worker = null;
       resolve();
@@ -58,6 +59,16 @@ function initialize() {
     worker.postMessage({ type: "load" });
   });
   return ready;
+}
+
+async function workerRequest(type, fields) {
+  await initialize();
+  if (!worker) throw new Error("Proses penelitian tidak tersedia.");
+  return new Promise((resolve, reject) => {
+    const id = ++sequence;
+    pendingRequests.set(id, { resolve, reject });
+    worker.postMessage({ ...fields, type, id });
+  });
 }
 
 export const automaticResearch = {
@@ -76,23 +87,14 @@ export const automaticResearch = {
     await initialize();
     worker?.postMessage({ type: "cancel" });
   },
-  async reset() {
-    await initialize();
-    if (!worker) return;
-    return new Promise((resolve, reject) => {
-      const id = ++sequence;
-      exportsPending.set(id, { resolve, reject });
-      worker.postMessage({ type: "reset", id });
-    });
+  reset() {
+    return workerRequest("reset");
   },
-  async export(kind) {
-    await initialize();
-    if (!worker) throw new Error("Proses penelitian tidak tersedia.");
-    return new Promise((resolve, reject) => {
-      const id = ++sequence;
-      exportsPending.set(id, { resolve, reject });
-      worker.postMessage({ type: "export", kind, id });
-    });
+  export(kind) {
+    return workerRequest("export", { kind });
+  },
+  compareRedirects(file) {
+    return workerRequest("redirectComparison", { file });
   },
   async activeModel() {
     await initialize();

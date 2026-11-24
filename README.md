@@ -20,6 +20,27 @@ Contoh tersebut menunjukkan format CSV. Penelitian memerlukan kedua label pada s
 
 Dataset, model, dan hasil riset tidak disertakan. Label historis dan keluaran model tidak menjamin keamanan URL.
 
+## Perbandingan URL pendek
+
+Di **Pemindai URL**, gunakan **Pindai URL** untuk menghitung fitur dan prediksi URL awal. Tautan bertoken dari layanan pemendek yang dikenal menampilkan tombol **Periksa Tujuan Redirect**. Aktifkan `ONLINE_SCAN_ENABLED=1` pada server jika pemeriksaan HEAD diizinkan. Status pemeriksaan, tujuan akhir, dan rantai pengalihan ditampilkan sebagai teks. Bila server memblokir tujuan, tidak menemukan redirect, atau kehabisan waktu, analisis awal tetap tersedia dan kolom tujuan menampilkan N/A.
+
+Pemindai menampilkan fitur awal dan tujuan berdampingan. Penanda **Dasar** menunjukkan tujuh fitur yang juga termasuk dalam 19 fitur lengkap. Jika model tersedia, masing-masing URL memperoleh prediksi dan skor dari model yang sama. Skor tersebut belum dikalibrasi. Tujuan yang diperiksa scanner adalah pengamatan saat itu melalui HEAD. Tujuan dapat berbeda pada waktu lain atau untuk klien lain.
+
+### Analisis bukti historis
+
+Setelah penelitian E1–E6 selesai, buka **Evaluasi Model**. Analisis pasangan merupakan langkah opsional. Unduh **Pembagian Dataset** untuk mendapatkan nomor record dan pilih tautan pendek dari partisi `test`. Buat satu CSV bukti dengan kolom berikut. Baris ini hanya contoh format.
+
+```csv
+row,url_awal,url_tujuan,sumber
+2,https://t.ly/contoh,https://example.com/arsip,ARSIP-CONTOH-001
+```
+
+`row` adalah nomor record dari ekspor split. `url_awal` harus cocok setelah normalisasi dengan record yang dirujuk, `url_tujuan` adalah tujuan historis yang dicatat, dan `sumber` berisi sitasi singkat atau ID arsip. Gunakan bukti yang kredibel. Aplikasi mencocokkan bukti dengan dataset dan menghitung fitur secara leksikal melalui API aplikasi, tanpa mengakses situs dalam file bukti.
+
+Kedua representasi dinilai pada pasangan uji yang sama menggunakan E2 yang dilatih dari URL awal. Label berasal dari CSV utama. Bukti ambigu, bukti yang tidak cocok, dan pasangan dengan tujuan yang bertumpang tindih dengan URL terkait atau domain di data pelatihan/validasi dikeluarkan. Laporan memuat cakupan, alasan pengecualian, sumber, dan metrik kedua representasi. ROC-AUC ditampilkan sebagai N/A jika hanya ada satu kelas. Perbandingan ini bersifat tambahan dan tidak mengubah split, model, atau metrik agregat E1–E6. Label historis pada pasangan tidak mengonfirmasi kondisi tujuan saat ini.
+
+Laporan pasangan dapat diunduh sebagai JSON dengan hash file bukti, nomor record, label, sumber, fitur, prediksi, dan skor. Browser menyimpan laporan dan sidik hash bersalt untuk mencocokkan record, sementara URL dari file bukti hanya diproses selama evaluasi. Untuk workspace penelitian yang dibuat sebelum fitur ini tersedia, jalankan kembali CSV utama agar sidik pencocokan dibuat.
+
 ## Local development
 
 Prerequisites: Python 3.12 and Node.js 24.x (matching Vercel and CI).
@@ -66,7 +87,7 @@ Laporan lama dalam format `research-summary.json` masih dapat diimpor secara ops
 | `GET /api/health` | — | API readiness and deployed-model status |
 | `POST /api/features` | JSON `{ "url": "https://example.com" }` | Ordered features, definitions, types, similarity |
 | `POST /api/predict` | URL JSON | Lexical features and deployed prediction, or explicit unavailable state |
-| `POST /api/scan` | URL JSON | Lexical prediction plus separate network metadata |
+| `POST /api/scan` | JSON dengan `url` dan `check_redirect` opsional | Prediksi dan fitur URL awal. Jika pemeriksaan eksplisit berhasil, respons juga memuat analisis tujuan. |
 | `POST /api/research/features` | JSON daftar URL terbatas | Fitur leksikal dan kunci pengelompokan dalam urutan input |
 | `POST /api/research/train/{E1…E6}` | Byte matriks, label, split, dan indikator | Satu hasil eksperimen. E2 menyertakan forest numerik. |
 | `POST /api/dataset/analyze` | Multipart field `file` | Validated counts, hash, masked preview |
@@ -95,7 +116,7 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-The browser runner starts Python and Vite when needed. On a machine with system Chromium, use `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium npm run test:browser`. Ensure the venv is activated so its Python is used. CI also runs the workflow on push and pull request. Backend tests use mocked network responses and safe test targets, never live phishing sites.
+The browser runner starts Python and Vite when needed. On a machine with system Chromium, use `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium npm run test:browser`. Ensure the venv is activated so its Python is used. CI also runs the workflow on push and pull request. Redirect tests use mocked HEAD and DNS responses for success, blocked destinations, and timeout. Historical comparison tests use synthetic evidence. Live targets and the original research dataset are outside this test coverage.
 
 Validated in this cloud instance: lexical extraction, URL rejection and IDNA, real test-fixture training and model reload/checksum rejection, group isolation, metrics, CSV validation, DNS/IP/redirect blocking, pinned connections with verified TLS context, HEAD-only reads, body/rate limits, localStorage masking/deletion/exports, all nine pages, frontend/API integration and mobile navigation. See the pull request for final test counts. This is **not** evidence of Vercel deployment or real-world classifier accuracy.
 

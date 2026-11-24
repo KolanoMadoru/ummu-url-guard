@@ -1,4 +1,5 @@
 import { prepareAutomaticData, readAutomaticCSV, splitAutomaticData } from "../utils/automatic-data.js";
+import { compareHistoricalRedirects, redirectKeys } from "../utils/redirect-comparison.js";
 import { csv } from "../utils/storage.js";
 
 const STAGES = ["prepare", "split", "features", "train", "evaluate"];
@@ -9,8 +10,12 @@ const BATCH_BYTES = 1_250_000;
 const encoder = new TextEncoder();
 const empty = () => ({ completed: [], dataset: null, results: [] });
 const notify = (type, fields = {}) => postMessage({ type, ...fields });
-let checkpoint = empty(), database, currentRun, operation, pendingReset;
+let checkpoint = empty(), database, currentRun, comparisonRun, operation, pendingReset;
 let phase = "idle", stage = null, progress = null, error = "", storageWarning = "";
+
+function redirectComparisonReady() {
+  return Boolean(checkpoint.keySalt && checkpoint.report);
+}
 
 function snapshot() {
   notify("snapshot", { snapshot: {
@@ -18,6 +23,9 @@ function snapshot() {
     completed: checkpoint.completed,
     dataset: checkpoint.dataset,
     report: checkpoint.report ?? null,
+    redirectComparisonReady: redirectComparisonReady(),
+    redirectComparisonRunning: Boolean(comparisonRun),
+    redirectComparison: checkpoint.redirectComparison?.summary ?? null,
   } });
 }
 
@@ -112,10 +120,10 @@ async function request(path, body, type, signal) {
   }
 }
 
-function* batches(rows) {
+function* batches(urls) {
   let values = [], bytes = 11;
-  for (const row of rows) {
-    const value = JSON.stringify(row.url);
+  for (const url of urls) {
+    const value = JSON.stringify(url);
     const size = encoder.encode(value).length + 1;
     if (values.length >= BATCH_ROWS || (values.length && bytes + size > BATCH_BYTES)) {
       yield values;
@@ -139,29 +147,43 @@ async function getFeatures(values, signal) {
   }
 }
 
+async function extractURLs(urls, signal, { expected, onProgress } = {}) {
+  let info = expected;
+  const extracted = [];
+  for (const batch of batches(urls)) {
+    signal.throwIfAborted();
+    const responses = await getFeatures(batch, signal);
+    for (const { rows, ...metadata } of responses) {
+      if (!Array.isArray(rows) || !Array.isArray(metadata.feature_names) || metadata.feature_names.length !== 19 ||
+          !Array.isArray(metadata.basic_features) || metadata.basic_features.length !== 7)
+        throw new Error("API mengembalikan skema fitur yang tidak sesuai.");
+      if (info && (
+        info.schema_version !== metadata.schema_version ||
+        info.reference_version !== metadata.reference_version ||
+        info.shortener_version !== metadata.shortener_version ||
+        info.psl_version !== metadata.psl_version ||
+        info.feature_names.join() !== metadata.feature_names.join() ||
+        info.basic_features.join() !== metadata.basic_features.join()
+      ))
+        throw new Error("Skema fitur berubah selama pemrosesan. Ulangi dengan versi server yang sama.");
+      info = metadata;
+      for (const row of rows) extracted.push(row);
+    }
+    onProgress?.(extracted.length);
+  }
+  if (extracted.length !== urls.length) throw new Error("Jumlah fitur dari API berbeda dari jumlah baris input.");
+  return { extracted, metadata: info };
+}
+
 async function prepare(file, signal) {
   if (!file) throw new Error("Pilih satu file CSV dan mulai pemrosesan.");
   advance(0, file.size, "Membaca dan memvalidasi struktur CSV");
   const parsed = await readAutomaticCSV(file, {
     signal, onProgress: (value) => advance(value.bytes, file.size, "Membaca dan memvalidasi struktur CSV"),
   });
-  let info;
-  const extracted = [];
-  advance(0, parsed.rows.length, "Memeriksa URL dan menghitung fitur leksikal");
-  for (const batch of batches(parsed.rows)) {
-    signal.throwIfAborted();
-    const responses = await getFeatures(batch, signal);
-    for (const { rows, ...metadata } of responses) {
-      if (!Array.isArray(rows) || metadata.feature_names?.length !== 19 || metadata.basic_features?.length !== 7)
-        throw new Error("API mengembalikan skema fitur yang tidak sesuai.");
-      if (info && JSON.stringify(info) !== JSON.stringify(metadata))
-        throw new Error("Skema fitur berubah selama pemrosesan. Ulangi dengan versi server yang sama.");
-      info = metadata;
-      for (const row of rows) extracted.push(row);
-    }
-    advance(extracted.length, parsed.rows.length, "Memeriksa URL dan menghitung fitur leksikal");
-  }
-  if (extracted.length !== parsed.rows.length) throw new Error("Jumlah fitur dari API berbeda dari jumlah baris input.");
+  const featureProgress = (count) => advance(count, parsed.rows.length, "Memeriksa URL dan menghitung fitur leksikal");
+  featureProgress(0);
+  const { extracted, metadata } = await extractURLs(parsed.rows.map((row) => row.url), signal, { onProgress: featureProgress });
   const prepared = prepareAutomaticData(parsed.rows, extracted);
   const { summary, rows, groups } = prepared;
   checkpoint.dataset = {
@@ -173,20 +195,15 @@ async function prepare(file, signal) {
   };
   checkpoint.issues = [...parsed.issues, ...prepared.issues].sort((a, b) => a.row - b.row);
   checkpoint.dataset.issues = checkpoint.issues.slice(0, 20);
-  checkpoint.metadata = info;
+  checkpoint.metadata = metadata;
   checkpoint.experimentId = crypto.randomUUID();
-  // Equality of audit keys is sufficient for split checks. Keep only local numeric IDs.
-  const keyMaps = { normalized: new Map(), related: new Map(), domain: new Map() };
+  // Keep audit equality keys so a later evidence file can be matched without storing raw URLs.
+  checkpoint.keySalt = crypto.randomUUID();
   checkpoint.prepared = {
     groups, summary,
-    rows: rows.map(({ row, label, provider, brand, group, normalized, related, domain, features }) => {
-      const keys = { normalized, related, domain };
-      for (const [name, value] of Object.entries(keys)) {
-        const mapping = keyMaps[name];
-        if (!mapping.has(value)) mapping.set(value, mapping.size);
-        keys[name] = String(mapping.get(value));
-      }
-      return { row, label, provider, brand, group, ...keys, features: new Float32Array(features) };
+    rows: rows.map((original) => {
+      const { row, label, provider, brand, group, features } = original;
+      return { row, label, provider, brand, group, ...redirectKeys(original, checkpoint.keySalt), features: new Float32Array(features) };
     }),
   };
 }
@@ -336,6 +353,10 @@ async function run(file, throughStage) {
 }
 
 function exportData(kind) {
+  if (kind === "redirects" && checkpoint.redirectComparison) {
+    const { summary, pairs } = checkpoint.redirectComparison;
+    return JSON.stringify({ ...summary, pairs }, null, 2);
+  }
   if (kind === "issues" && checkpoint.issues) {
     return checkpoint.issues.length ? csv(checkpoint.issues) : "row,code,message\r\n";
   }
@@ -368,6 +389,30 @@ function exportData(kind) {
   throw new Error("Selesaikan tahap terkait sebelum mengunduh hasil.");
 }
 
+async function compareRedirects(file, id) {
+  if (!redirectComparisonReady()) {
+    notify("redirectComparison", { id, error: "Selesaikan penelitian dengan versi aplikasi ini untuk membandingkan pasangan redirect." });
+    return;
+  }
+  comparisonRun = new AbortController();
+  snapshot();
+  try {
+    const result = await compareHistoricalRedirects({
+      file, checkpoint, signal: comparisonRun.signal,
+      extract: async (urls, signal) => (await extractURLs(urls, signal, { expected: checkpoint.metadata })).extracted,
+    });
+    comparisonRun.signal.throwIfAborted();
+    checkpoint.redirectComparison = result;
+    await saveCheckpoint();
+    notify("redirectComparison", { id, content: result.summary });
+  } catch (failure) {
+    notify("redirectComparison", { id, error: comparisonRun.signal.aborted ? "Perbandingan dibatalkan." : failure.message });
+  } finally {
+    comparisonRun = null;
+    snapshot();
+  }
+}
+
 async function reset(id) {
   checkpoint = empty();
   phase = "idle";
@@ -385,13 +430,14 @@ self.onmessage = ({ data }) => {
       operation = load();
       break;
     case "run":
-      if (!currentRun && !pendingReset) operation = run(data.file, data.throughStage);
+      if (!currentRun && !comparisonRun && !pendingReset) operation = run(data.file, data.throughStage);
       break;
     case "cancel":
       currentRun?.abort();
       break;
     case "reset": {
       currentRun?.abort();
+      comparisonRun?.abort();
       const pending = Promise.resolve(operation).then(() => reset(data.id));
       operation = pendingReset = pending;
       pending.then(() => {
@@ -399,6 +445,13 @@ self.onmessage = ({ data }) => {
       });
       break;
     }
+    case "redirectComparison":
+      if (currentRun || comparisonRun || pendingReset) {
+        notify("redirectComparison", { id: data.id, error: "Tunggu proses penelitian yang sedang berjalan." });
+      } else {
+        operation = compareRedirects(data.file, data.id);
+      }
+      break;
     case "export":
       try {
         notify("export", { id: data.id, content: exportData(data.kind) });

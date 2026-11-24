@@ -129,6 +129,10 @@ class URLRequest(BaseModel):
     url: str = Field(min_length=1, max_length=MAX_URL_LENGTH)
 
 
+class ScanRequest(URLRequest):
+    check_redirect: bool = Field(default=False, strict=True)
+
+
 class EvaluationRequest(BaseModel):
     # Experiments are returned to the browser, never assumed to persist on Vercel.
     # Re-evaluation takes raw predictions, not client-supplied metric claims.
@@ -241,11 +245,26 @@ def predict(body: URLRequest):
 
 
 @app.post("/api/scan")
-async def scan(body: URLRequest):
-    result = extraction_or_error(body.url)
-    prediction = production.predict(result)
-    online = await run_in_threadpool(scan_url, result["url"]) if online_scan_enabled() else {"status": "disabled", "reason": "Online checking is disabled by environment configuration.", "redirect_count": 0}
-    return {**result, **prediction, "online": online, "id": str(uuid.uuid4()), "timestamp": datetime.now(timezone.utc).isoformat(),
+async def scan(body: ScanRequest):
+    initial = extraction_or_error(body.url)
+    prediction = production.predict(initial)
+    destination = None
+    if not online_scan_enabled():
+        online = {"status": "disabled", "reason": "Online checking is disabled by environment configuration.", "redirect_count": 0}
+    elif not body.check_redirect:
+        online = {"status": "not_requested", "reason": "Redirect check was not requested.", "redirect_count": 0}
+    elif not initial["shortener_provider"]:
+        online = {"status": "not_applicable", "reason": "Redirect checks require a recognized short link with a token.", "redirect_count": 0}
+    else:
+        online = await run_in_threadpool(scan_url, initial["url"])
+        if online["status"] == "complete":
+            if online["redirect_count"] > 0:
+                end = extraction_or_error(online["final_url"])
+                destination = {**end, **production.predict(end)}
+            else:
+                online = {**online, "status": "no_redirect", "reason": "No HTTP redirect was observed.", "final_url": None}
+    return {**initial, **prediction, "initial_url": body.url, "basic_features": BASIC_FEATURES,
+            "destination": destination, "online": online, "id": str(uuid.uuid4()), "timestamp": datetime.now(timezone.utc).isoformat(),
             "disclaimer": "Machine learning prediction is an indicator, not a guarantee of website safety."}
 
 

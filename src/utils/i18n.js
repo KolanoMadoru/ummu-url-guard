@@ -2,6 +2,7 @@
 const messages = {
   benign: "Aman (benign)", phishing: "Phishing", unavailable: "Tidak Tersedia",
   complete: "Selesai", disabled: "Dinonaktifkan", browser: "Browser", python: "Python",
+  not_requested: "Belum diperiksa", not_applicable: "Tidak berlaku", no_redirect: "Tidak ditemukan redirect",
   basic: "Fitur Dasar", extended: "Fitur Tambahan", train: "Pelatihan",
   validation: "Validasi", test: "Pengujian", integer: "Bilangan bulat", float: "Bilangan desimal",
   accuracy: "Akurasi", precision: "Presisi", recall: "Recall", f1: "Skor F1",
@@ -46,6 +47,9 @@ const messages = {
   "exact match": "Sama persis", "multiple edits": "Beberapa perubahan", "hyphen insertion": "Penyisipan tanda hubung",
   insertion: "Penyisipan", deletion: "Penghapusan", substitution: "Penggantian", transposition: "Pertukaran posisi",
   "Online checking is disabled by environment configuration.": "Pemeriksaan jaringan dinonaktifkan oleh konfigurasi lingkungan.",
+  "Redirect check was not requested.": "Tujuan redirect belum diperiksa.",
+  "Redirect checks require a recognized short link with a token.": "Pemeriksaan redirect tersedia untuk tautan pendek bertoken dari layanan yang dikenal.",
+  "No HTTP redirect was observed.": "Pemeriksaan HEAD tidak menemukan redirect HTTP.",
   "Internal hostnames are blocked.": "Nama host internal diblokir.",
   "DNS capacity is busy; try again later.": "Kapasitas DNS sedang sibuk; coba lagi nanti.",
   "DNS resolution timed out.": "Waktu resolusi DNS habis.", "DNS resolution failed.": "Resolusi DNS gagal.",

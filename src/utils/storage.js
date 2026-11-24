@@ -56,7 +56,8 @@ export function saveScan(result) {
     shortener: Boolean(result.shortener_provider),
     typosquatting: Boolean(result.typosquatting?.indicator),
   };
-  return write(HISTORY_KEY, [record, ...history()].slice(0, MAX_HISTORY));
+  const previous = history().filter((entry) => entry.id !== record.id);
+  return write(HISTORY_KEY, [record, ...previous].slice(0, MAX_HISTORY));
 }
 export function deleteScan(id) {
   return write(

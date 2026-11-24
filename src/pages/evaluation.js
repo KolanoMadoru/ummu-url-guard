@@ -6,6 +6,7 @@ import {
   mountResearchControls, renderResearchStage, researchReportCaption, watchResearchReport,
 } from "../components/automatic-research.js";
 import { mountResearchEvaluation, renderResearchEvaluation } from "../components/research-workspace.js";
+import { mountRedirectResearch, renderRedirectResearch } from "../components/redirect-research.js";
 
 const independentMetricKeys = ["accuracy", "precision", "recall", "f1", "roc_auc", "pr_auc"];
 
@@ -15,6 +16,7 @@ export function render() {
     ${renderResearchStage("evaluate", "Evaluasi konfigurasi yang sudah dilatih pada partisi uji yang tersimpan.")}
     ${report ? researchReportCaption(report) + renderResearchEvaluation(report)
       : empty("Selesaikan pelatihan dan evaluasi untuk melihat metrik penelitian.")}
+    ${renderRedirectResearch()}
     <section class="card"><details class="research-options">
       <summary>Evaluasi Prediksi pada Data Uji Independen</summary>
       <p>Unggah JSON dengan larik <code>actual</code>, <code>predicted</code> dan <code>phishing_scores</code>. Gunakan label 0 untuk benign dan 1 untuk phishing.</p>
@@ -26,6 +28,7 @@ export function render() {
 
 export function mount(_state, navigate) {
   mountResearchEvaluation(currentResearchReport());
+  const unmountRedirectResearch = mountRedirectResearch();
   const controls = mountResearchControls(document.querySelector("#research-stage-panel"));
   const unwatch = watchResearchReport(() => navigate("evaluation"));
   const picker = document.querySelector("#evaluation-file");
@@ -56,5 +59,6 @@ export function mount(_state, navigate) {
   return () => {
     unwatch();
     controls.dispose();
+    unmountRedirectResearch();
   };
 }
