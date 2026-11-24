@@ -18,6 +18,8 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "models")
     args = parser.parse_args()
     df, summary = read_dataset(args.dataset.read_bytes(), max_rows=None)
+    if summary["has_research_metadata"]:
+        parser.error("Research metadata requires python -m ml.research_pipeline to preserve and audit its split.")
     report, bundle = run_experiment(df, summary, args.dataset.name, ("basic", "extended"), timeout=float("inf"))
     args.output.mkdir(parents=True, exist_ok=True)
     artifact = args.output / "production.joblib"

@@ -12,7 +12,8 @@ export function bindDatasetReadiness(button) {
     button.disabled = running || !eligibility.eligible;
     const input = document.querySelector("#dataset-file");
     if (input) input.disabled = running;
-    target.innerHTML = `<strong>${escape(displayText(data.status === "Validated" ? "Dataset Ready" : data.status))}</strong><p>${escape(displayText(eligibility.reason))}</p>
+    const status = data.status === "Validated" ? data.summary.hasResearchMetadata ? "CSV Terbaca" : "Dataset Ready" : data.status;
+    target.innerHTML = `<strong>${escape(displayText(status))}</strong><p>${escape(displayText(eligibility.reason))}</p>
       ${
         data.file
           ? table(
@@ -32,7 +33,7 @@ export function bindDatasetReadiness(button) {
           : ""
       }
       <div class="actions"><a class="button secondary" href="#dataset">Buka Manajemen Dataset</a>${data.summary ? '<button id="dataset-config-export" class="button secondary">Ekspor Konfigurasi Pelatihan Lokal</button>' : ""}</div>
-      <p>Pelatihan daring menggunakan file asli lengkap: maksimal 2 MiB / 1.000 baris sumber, disertai pemeriksaan pembagian domain. Tidak ada bagian data yang dipilih otomatis. Untuk file lebih besar:</p><code>python -m ml.train_local /path/to/dataset.csv</code><p>Jalankan perintah ini secara lokal menggunakan CSV asli. Browser tidak melatih dataset besar atau menggabungkan metrik per potongan.</p>`;
+      <p>Pelatihan daring menerima CSV sederhana hingga 2 MiB dan 1.000 baris sumber. Jalankan pipeline penelitian untuk dataset besar, master metadata, atau split penelitian.</p><code>python -m ml.research_pipeline data.csv</code><p>Lihat perintah untuk master, split, dan ZIP di Manajemen Dataset.</p>`;
     document
       .querySelector("#dataset-config-export")
       ?.addEventListener("click", () =>
@@ -43,10 +44,10 @@ export function bindDatasetReadiness(button) {
           validation_source: data.summary.source,
           valid_records: data.summary.valid_records,
           class_distribution: data.summary.class_distribution,
-          command: "python -m ml.train_local /path/to/dataset.csv",
+          command: "python -m ml.research_pipeline data.csv",
           random_state: 42,
           split:
-            "Registered-domain groups; target 70/15/15; Python verifies eligibility",
+            "Preserve audited splits when supplied. Otherwise use group splits with a target ratio of 70/15/15.",
           feature_sets: ["basic", "extended"],
           production_model: "Extended Random Forest",
           original_file_required: true,

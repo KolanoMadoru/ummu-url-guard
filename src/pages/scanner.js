@@ -28,25 +28,26 @@ export function mount() {
     event.preventDefault();
     error.hidden = true;
     const button = document.querySelector("#scan-button");
+    const url = form.querySelector("input").value;
     busy(button, true);
-    progress.textContent =
-      "Sedang Memindai: mengekstraksi fitur dan memeriksa metadata jaringan publik…";
+    progress.textContent = "Sedang memindai URL…";
     try {
-      const result = await api("scan", {
-        json: { url: form.querySelector("input").value },
-      });
+      const result = await api("scan", { json: { url } });
       const saved = saveScan(result);
       const online = result.online;
       output.innerHTML = `<section class="card result ${result.prediction || "unavailable"}"><div class="result-heading"><i data-lucide="shield"></i><div><span class="eyebrow">HASIL PEMINDAIAN</span><h2>${escape(result.prediction ? `Prediksi ${classLabel(result.prediction)}` : "Prediksi Tidak Tersedia — model belum dilatih")}</h2></div><span class="badge">${escape(displayText(online.status))}</span></div>
         ${table(
           ["Properti", "Nilai pengamatan"],
           [
-            ["URL Asli", result.url],
+            ["URL Asli", url],
             ["URL Tujuan Akhir", online.final_url || "Tidak Tersedia"],
             ["Probabilitas phishing menurut model", percent(result.probability)],
             [
               "Penyedia URL pendek",
-              result.shortener_provider || "Tidak ada pemendek yang dikenal",
+              result.shortener_provider ||
+                (result.shortener_service
+                  ? `${result.shortener_service} (tanpa token tautan)`
+                  : "Tidak ada pemendek yang dikenal"),
             ],
             [
               "Indikator Typosquatting",

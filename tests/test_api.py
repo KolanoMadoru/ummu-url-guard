@@ -19,10 +19,22 @@ def test_health_features_and_model_unavailable(client):
 
 
 def test_scan_prediction_survives_online_failure(client, monkeypatch):
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
     monkeypatch.setattr(index, 'scan_url', lambda u: {'status': 'unavailable', 'reason': 'DNS resolution failed.', 'redirect_count': 0})
     result = client.post('/api/scan', json={'url': 'https://example.com'}).json()
     assert result['online']['status'] == 'unavailable' and result['features']['url_length'] > 0
     assert 'guarantee' in result['disclaimer']
+
+
+def test_scan_defaults_to_offline_and_shares_the_original_url_features(client, monkeypatch):
+    monkeypatch.delenv('ONLINE_SCAN_ENABLED', raising=False)
+    payload = {'url': 'HTTPS://BÜCHER.de:443/über'}
+    scan = client.post('/api/scan', json=payload).json()
+    features = client.post('/api/features', json=payload).json()
+    assert not client.get('/api/health').json()['online_scan_enabled']
+    assert scan['online']['status'] == 'disabled'
+    assert scan['features'] == features['features']
+    assert scan['features']['url_length'] == len(payload['url'])
 
 
 def test_analyze_and_train(client, research_csv):
@@ -32,6 +44,17 @@ def test_analyze_and_train(client, research_csv):
     assert len(result.json()['results']) == 3
     assert index.production.model is None
     assert client.post('/api/train', files={'file': ('empty.csv', b'', 'text/csv')}).status_code == 422
+
+
+@pytest.mark.parametrize('endpoint', ['train', 'experiment'])
+def test_online_training_cannot_discard_declared_research_metadata(client, endpoint):
+    csv = b'url,label, SPLIT_FINAL \nhttps://one.example.com,0,train\nhttps://two.example.com,1,test\n'
+    files = {'file': ('synthetic.csv', csv, 'text/csv')}
+    analysis = client.post('/api/dataset/analyze', files=files)
+    assert analysis.status_code == 200 and analysis.json()['has_research_metadata']
+    result = client.post(f'/api/{endpoint}', files=files)
+    assert result.status_code == 422
+    assert result.json()['detail'] == 'Research metadata requires the local audited pipeline.'
 
 
 def test_evaluate_input_validation(client):

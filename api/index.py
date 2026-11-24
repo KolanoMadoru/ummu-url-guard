@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from ml.dataset import read_dataset, MAX_UPLOAD_BYTES
-from ml.features import extract_features
+from ml.features import MAX_URL_LENGTH, extract_features
 from ml.model import ProductionModel, run_experiment
 from ml.scanner import scan_url
 
@@ -94,7 +94,7 @@ async def guard(request: Request, call_next):
 
 
 class URLRequest(BaseModel):
-    url: str = Field(min_length=1, max_length=4096)
+    url: str = Field(min_length=1, max_length=MAX_URL_LENGTH)
 
 
 class EvaluationRequest(BaseModel):
@@ -107,16 +107,20 @@ class EvaluationRequest(BaseModel):
 
 def extraction_or_error(value):
     try:
-        return extract_features(value)
+        return extract_features(value, max_length=MAX_URL_LENGTH)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
+
+
+def online_scan_enabled():
+    return os.getenv("ONLINE_SCAN_ENABLED", "0") == "1"
 
 
 @app.get("/api/health")
 def health():
     return {"status": "ok", "model_available": production.model is not None, "model_version": production.metadata.get("version"),
             "model_reason": production.reason, "model_metrics": production.metadata.get("metrics"),
-            "online_scan_enabled": os.getenv("ONLINE_SCAN_ENABLED", "1") == "1", "dataset_storage": "request-only"}
+            "online_scan_enabled": online_scan_enabled(), "dataset_storage": "request-only"}
 
 
 @app.post("/api/features")
@@ -134,7 +138,7 @@ def predict(body: URLRequest):
 async def scan(body: URLRequest):
     result = extraction_or_error(body.url)
     prediction = production.predict(result)
-    online = await run_in_threadpool(scan_url, result["url"]) if os.getenv("ONLINE_SCAN_ENABLED", "1") == "1" else {"status": "disabled", "reason": "Online checking is disabled by environment configuration.", "redirect_count": 0}
+    online = await run_in_threadpool(scan_url, result["url"]) if online_scan_enabled() else {"status": "disabled", "reason": "Online checking is disabled by environment configuration.", "redirect_count": 0}
     return {**result, **prediction, "online": online, "id": str(uuid.uuid4()), "timestamp": datetime.now(timezone.utc).isoformat(),
             "disclaimer": "Machine learning prediction is an indicator, not a guarantee of website safety."}
 
@@ -162,6 +166,8 @@ async def train_upload(file, feature_sets):
         raise HTTPException(429, "An experiment is already running in this process.")
     try:
         df, summary = await dataset_file(file)
+        if summary["has_research_metadata"]:
+            raise HTTPException(422, "Research metadata requires the local audited pipeline.")
         try:
             report, _ = await run_in_threadpool(run_experiment, df, summary, file.filename or "uploaded.csv", feature_sets)
         except ValueError as exc:

@@ -1,7 +1,7 @@
 import Papa from "papaparse";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { DATASET_LIMITS } from "./dataset-config.js";
+import { DATASET_LIMITS, ONLINE_LIMITS } from "./dataset-config.js";
 
 const encoder = new TextEncoder();
 const LABELS = new Map([
@@ -10,10 +10,61 @@ const LABELS = new Map([
   ["phishing", "phishing"],
   ["1", "phishing"],
 ]);
+const RESEARCH_COLUMNS = [
+  "split", "split_final", "scenario", "kategori_audit", "source",
+  "registrable_domain", "url_asli_pasangan", "url_tujuan_terverifikasi",
+  "domain_icann_audit", "url_key_audit", "kelompok_audit", "keputusan_audit",
+  "status_kategori_audit", "status_redirect_audit", "status_pelatihan_final",
+];
+const SPLIT_ALIASES = new Map([
+  ...["train", "training", "pelatihan", "latih"].map((name) => [name, "train"]),
+  ...["val", "valid", "validation", "validasi"].map((name) => [name, "validation"]),
+  ...["test", "testing", "uji", "pengujian"].map((name) => [name, "test"]),
+]);
+const CATEGORY_LABELS = new Map([
+  ["biasa_0", "benign"], ["biasa_1", "phishing"],
+  ["pendek_0", "benign"], ["pendek_1", "phishing"],
+  ["merek_0", "benign"], ["merek_1", "phishing"],
+]);
+const EMPTY_METADATA = new Set(["", "-", "n/a", "na", "null", "none", "unknown", "tidak diketahui"]);
+const metadataValue = (value = "") => {
+  const text = value.trim().toLowerCase();
+  return EMPTY_METADATA.has(text) ? "" : text;
+};
+
+function readMetadata(row, label, columns, metadata, problems) {
+  metadata.records_read++;
+  if (metadata.split_distribution) {
+    const split = metadataValue(row[columns.get("split")]);
+    const final = metadataValue(row[columns.get("split_final")]);
+    const part = SPLIT_ALIASES.get(split);
+    const finalPart = SPLIT_ALIASES.get(final);
+    if ((split && !part) || (final && !finalPart)) {
+      metadata.invalid_split_records++;
+      metadata.split_distribution.unknown++;
+      problems.push("Invalid split. Use train, validation, or test.");
+    } else if (part && finalPart && part !== finalPart) {
+      metadata.split_conflict_records++;
+      metadata.split_distribution.unknown++;
+      problems.push("Conflicting split and split_final");
+    } else {
+      metadata.split_distribution[finalPart || part || "unknown"]++;
+    }
+  }
+  if (metadata.category_distribution) {
+    const category = row[columns.get("kategori_audit")].trim().toLowerCase();
+    const expectedLabel = CATEGORY_LABELS.get(category);
+    metadata.category_distribution[expectedLabel ? category : "unknown"]++;
+    if (expectedLabel && label && label !== expectedLabel) {
+      metadata.category_label_conflict_records++;
+      problems.push("Category and label disagree");
+    }
+  }
+}
 
 export function normalizeDatasetURL(value) {
   const input = value.trim();
-  if (!input || input.length > 4096 || /[\s\x00-\x20\x7f\\]/u.test(input))
+  if (!input || input.length > DATASET_LIMITS.maxURLLength || /[\s\x00-\x20\x7f\\]/u.test(input))
     throw new Error("Invalid URL syntax");
   const match = /^(https?):\/\/([^/?#]+)([^?#]*)(\?[^#]*)?(#.*)?$/iu.exec(
     input,
@@ -46,8 +97,8 @@ export function normalizeDatasetURL(value) {
       .replace(/%25/gu, "%")
       .replace(/[\[\]]/gu, (c) => (c === "[" ? "%5B" : "%5D"));
   const normalized = `${parsed.protocol}//${hostname}${parsed.port ? `:${parsed.port}` : ""}${encode(match[3] || "/")}${encode(match[4] || "")}${encode(match[5] || "")}`;
-  if (normalized.length > 4096)
-    throw new Error("Normalized URL exceeds 4096 characters");
+  if (normalized.length > DATASET_LIMITS.maxURLLength)
+    throw new Error(`Normalized URL exceeds ${DATASET_LIMITS.maxURLLength} characters`);
   return {
     normalized,
     masked: `${parsed.protocol}//${hostname}${parsed.port ? `:${parsed.port}` : ""}/…`,
@@ -92,6 +143,7 @@ export async function analyzeCSV(
     missing_urls: 0,
     missing_labels: 0,
     invalid_urls: 0,
+    urls_over_online_limit: 0,
     invalid_labels: 0,
     duplicate_records: 0,
     conflicting_labels: 0,
@@ -106,31 +158,49 @@ export async function analyzeCSV(
     storage:
       "File reference and bounded summary in session memory only; never localStorage.",
   };
-  let headers = null,
+  let columns = null,
     newline = null,
     pending = "",
-    offset = 0;
+    offset = 0,
+    recordNumber = 0;
   const issue = (row, message) => {
     if (errors.length < 100) errors.push({ row, message });
   };
   function consume(row, csvError = false) {
+    recordNumber++;
     if (row.length === 1 && row[0] === "") {
       summary.blank_rows_ignored++;
       return;
     }
     if (encoder.encode(row.join(",")).byteLength > limits.maxRecordBytes)
       throw new Error("A CSV record exceeds the 256 KiB resource limit.");
-    if (!headers) {
-      headers = row.map((s) => s.trim());
+    if (!columns) {
+      columns = new Map(row.map((s, i) => [s.trim().toLowerCase(), i]));
       if (
-        new Set(headers).size !== headers.length ||
-        !headers.includes("url") ||
-        !headers.includes("label") ||
+        columns.size !== row.length ||
+        !columns.has("url") ||
+        !columns.has("label") ||
         csvError
       )
         throw new Error(
           "CSV requires distinct url,label headers (additional columns are allowed).",
         );
+      summary.hasResearchMetadata = RESEARCH_COLUMNS.some((key) => columns.has(key));
+      if (summary.hasResearchMetadata) {
+        const metadata = {
+          records_read: 0,
+          split_conflict_records: 0,
+          invalid_split_records: 0,
+          category_label_conflict_records: 0,
+        };
+        if (columns.has("split") || columns.has("split_final"))
+          metadata.split_distribution = { train: 0, validation: 0, test: 0, unknown: 0 };
+        if (columns.has("kategori_audit"))
+          metadata.category_distribution = Object.fromEntries(
+            [...CATEGORY_LABELS.keys(), "unknown"].map((key) => [key, 0]),
+          );
+        summary.metadata_validation = metadata;
+      }
       return;
     }
     const count = ++summary.total_records;
@@ -139,13 +209,16 @@ export async function analyzeCSV(
         `Dataset exceeds the ${limits.maxRows.toLocaleString()} record resource limit. Use local processing.`,
       );
     const problems = [];
-    if (row.length !== headers.length || csvError) {
+    const malformed = row.length !== columns.size || csvError;
+    if (malformed) {
       problems.push("Malformed CSV or inconsistent field count");
       summary.csv_error_records++;
     }
-    const raw = (row[headers.indexOf("url")] || "").trim();
-    const rawLabel = (row[headers.indexOf("label")] || "").trim().toLowerCase();
-    const label = LABELS.get(rawLabel);
+    const raw = (row[columns.get("url")] || "").trim();
+    const rawLabel = (row[columns.get("label")] || "").trim().toLowerCase();
+    const label = LABELS.get(rawLabel.replace(/^([01])\.0+$/u, "$1"));
+    if (!malformed && summary.metadata_validation)
+      readMetadata(row, label, columns, summary.metadata_validation, problems);
     if (!raw) {
       summary.missing_urls++;
       problems.push("Missing URL");
@@ -167,6 +240,8 @@ export async function analyzeCSV(
       problems.push("Invalid HTTP/HTTPS URL syntax");
     }
     if (parsed) {
+      if (Math.max(raw.length, parsed.normalized.length) > ONLINE_LIMITS.maxURLLength)
+        summary.urls_over_online_limit++;
       key = bytesToHex(sha256(encoder.encode(parsed.normalized)));
       entry = seen.get(key);
       if (entry) summary.duplicate_records++;
@@ -204,7 +279,7 @@ export async function analyzeCSV(
     }
     if (problems.length) {
       summary.invalid_records++;
-      issue(count + 1, problems.join("; "));
+      issue(recordNumber, problems.join("; "));
     }
     if (preview.length < limits.previewRows)
       preview.push({
@@ -278,7 +353,7 @@ export async function analyzeCSV(
       phase: "Processing",
     });
   }
-  if (!headers || !summary.total_records)
+  if (!columns || !summary.total_records)
     throw new Error(
       "CSV must contain url,label headers and at least one data row.",
     );
