@@ -19,7 +19,7 @@ export function empty(
   return `<div class="empty-state"><i data-lucide="flask-conical"></i><h3>Belum Ada Hasil</h3><p>${escape(message)}</p><a class="button" href="#dataset">Buka Manajemen Dataset</a></div>`;
 }
 export function heading(title, description, extra = "") {
-  return `<div class="page-heading"><div><h1>${title}</h1><p>${description}</p></div>${extra}</div>`;
+  return `<div class="page-heading"><div><h1>${title}</h1>${description ? `<p>${description}</p>` : ""}</div>${extra}</div>`;
 }
 export function showError(target, error) {
   target.textContent = errorText(error);

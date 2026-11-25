@@ -74,10 +74,31 @@ const navigation = [
 ];
 const state = { health: null };
 let cleanupPage;
+const brand = (className) => `<a class="${className}" href="#dashboard">
+  <span class="brand-mark"><i data-lucide="shield-check" aria-hidden="true"></i></span>
+  <span>UMMU URL Guard</span>
+</a>`;
 
 document.querySelector("#app").innerHTML =
-  `<aside id="sidebar"><a class="brand" href="#dashboard"><span class="brand-mark"><i data-lucide="shield-check"></i></span><span>UMMU <b>URL GUARD</b></span></a><p class="nav-label">MENU UTAMA</p><nav aria-label="Navigasi utama">${navigation.map(([key, label, icon]) => `<a href="#${key}" data-page="${key}"><i data-lucide="${icon}"></i>${label}</a>`).join("")}</nav><div class="sidebar-footer">UMMU URL GUARD <span>v0.1.0</span></div></aside>
-  <div class="workspace"><header><div class="header-left"><button id="menu-toggle" class="icon-button" aria-label="Buka atau tutup navigasi" aria-expanded="false" aria-controls="sidebar"><i data-lucide="menu"></i></button><span>Deteksi Phishing pada URL Pendek dan Domain Typosquatting</span></div><span id="api-status" class="connection"><span class="status-dot"></span>Menghubungkan API</span></header><main id="content" tabindex="-1"></main><footer>Dibuat oleh Muhammad Rahman Muttaqin | NPM: 12105 55201 21 162</footer><p id="storage-warning" class="error" role="status"></p></div>`;
+  `<aside id="sidebar">
+    ${brand("brand")}
+    <nav aria-label="Navigasi utama">${navigation.map(([key, label, icon]) => `<a href="#${key}" data-page="${key}"><i data-lucide="${icon}"></i>${label}</a>`).join("")}</nav>
+  </aside>
+  <div class="workspace">
+    <header>
+      <div class="header-left">
+        <button id="menu-toggle" class="icon-button" aria-label="Buka atau tutup navigasi" aria-expanded="false" aria-controls="sidebar"><i data-lucide="menu"></i></button>
+        ${brand("brand mobile-brand")}
+        <span class="header-topic">Deteksi Phishing pada URL Pendek dan Domain Typosquatting</span>
+      </div>
+      <span id="api-status" class="connection" role="status">
+        <span class="status-dot" aria-hidden="true"></span><span id="api-status-text">Menghubungkan API</span>
+      </span>
+    </header>
+    <main id="content" tabindex="-1"></main>
+    <footer>Dibuat oleh Muhammad Rahman Muttaqin | NPM: 12105 55201 21 162</footer>
+    <p id="storage-warning" class="error" role="status"></p>
+  </div>`;
 // Localize native form validation independently of the browser's UI language.
 document.addEventListener("invalid", (event) => {
   const input = event.target;
@@ -115,13 +136,16 @@ function route() {
 }
 window.addEventListener("hashchange", route);
 route();
+const connection = document.querySelector("#api-status");
+const connectionText = document.querySelector("#api-status-text");
 api("health")
   .then((value) => {
     state.health = value;
-    document.querySelector("#api-status").textContent =
-      "● API Python Terhubung";
+    connection.dataset.state = "connected";
+    connectionText.textContent = "API Python Terhubung";
     if (!location.hash || location.hash === "#dashboard") route();
   })
   .catch(() => {
-    document.querySelector("#api-status").textContent = "● API Python Tidak Terhubung";
+    connection.dataset.state = "disconnected";
+    connectionText.textContent = "API Python Tidak Terhubung";
   });

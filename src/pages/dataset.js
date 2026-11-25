@@ -11,7 +11,7 @@ import {
 import { distribution, mountResearchImport, renderResearchImport, renderShortenerCoverage } from "../components/research-workspace.js";
 
 export function render() {
-  return `${heading("Manajemen Dataset", "Unggah satu CSV berlabel dan jalankan penelitian dari validasi hingga evaluasi.")}
+  return `${heading("Manajemen Dataset")}
     <section class="card" id="dataset-workflow">
       <h2>Dataset Penelitian</h2>
       <p>Gunakan kolom <code>url,label</code> dengan label <code>0</code> untuk benign dan <code>1</code> untuk phishing. Batas ${DATASET_LIMITS.maxFileBytes / 1048576} MiB dan 50.000 baris data.</p>
@@ -20,7 +20,6 @@ export function render() {
         ${filePicker()}<p>Seret satu CSV ke sini atau pilih file.</p>
       </div>
       <p id="selected-file" class="hint" data-research-selection></p>
-      <p class="hint">Aplikasi mengirim URL dalam kelompok kecil ke API untuk ekstraksi fitur leksikal. Situs tujuan tidak dibuka. Browser menyimpan fitur dan hasil penelitian tanpa URL mentah.</p>
       <p class="error" id="dataset-selection-error" role="alert" hidden></p>
       <div class="actions">
         <button class="button" type="button" data-research-run="evaluate" data-research-automatic disabled>Jalankan Penelitian Otomatis</button>
@@ -94,12 +93,11 @@ function renderSplit(dataset) {
       count(part.benign), count(part.phishing), count(part.shorteners)]] : [];
   });
   if (!rows.length) return "";
-  const auditPassed = audit === true || audit?.passed === true;
+  const auditFailed = audit === false || audit?.passed === false;
   return `<section class="card">
-    <h3>Audit dan Pembagian Dataset</h3>
-    <p>${auditPassed ? "Tidak ditemukan kebocoran berdasarkan URL dan domain yang diperiksa." : "Pemeriksaan hubungan lintas split memerlukan perhatian."}</p>
+    <h3>Pembagian Dataset</h3>
+    ${auditFailed ? '<p class="error" role="alert">Pemeriksaan hubungan lintas split memerlukan perhatian.</p>' : ""}
     ${table(["Split", "Fungsi", "Data", "Rasio Aktual", "Kelompok", "Benign", "Phishing", "Tautan Pendek"], rows)}
-    <p class="hint">Target 70% pelatihan, 15% validasi, dan 15% pengujian dengan seed 42. Kelompok terkait tetap utuh. Tujuan tautan pendek tidak diketahui dari CSV.</p>
     ${warnings?.length ? `<ul class="notice">${warnings.map((warning) => `<li>${escape(warning)}</li>`).join("")}</ul>` : ""}
     ${renderShortenerCoverage(dataset.shortenerCoverage)}
     </section>`;

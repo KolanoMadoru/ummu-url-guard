@@ -7,8 +7,8 @@ import { mountResearchAnalysis, renderResearchAnalysis } from "../components/res
 
 export function render() {
   const report = currentResearchReport();
-  return `${heading("Eksperimen Fitur", "Bandingkan tiga algoritma dan dua kelompok fitur pada split yang sama.")}
-    ${renderResearchStage("train", "Enam konfigurasi memakai 7 fitur dasar atau 19 fitur lengkap. Ekstraksi fitur yang sudah selesai digunakan kembali.")}
+  return `${heading("Eksperimen Fitur")}
+    ${renderResearchStage("train")}
     ${report ? researchReportCaption(report) + renderResearchAnalysis(report)
       : empty("Selesaikan evaluasi untuk melihat perbandingan enam konfigurasi.")}`;
 }
