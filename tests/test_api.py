@@ -182,15 +182,26 @@ def test_scan_does_not_report_the_shortener_itself_as_a_destination(client, monk
     assert result['prediction_target'] is None
 
 
-def test_scan_returns_a_redirect_recovered_with_get_headers(client, monkeypatch):
+def test_scan_recovers_get_redirects_at_multiple_hops(client, monkeypatch):
+    intermediate = 'https://bridge.example/path'
+    destination = 'https://destination.example/landing'
     monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
     monkeypatch.setattr(scanner.socket, 'getaddrinfo', lambda *_a, **_kw: dns_response('93.184.216.34'))
-    monkeypatch.setattr(scanner, 'pinned_head', Mock(side_effect=[(405, None), (200, None)]))
-    monkeypatch.setattr(scanner, 'pinned_get', Mock(return_value=(302, 'https://destination.example/landing')))
+    monkeypatch.setattr(scanner, 'pinned_head', Mock(side_effect=[(405, None), (200, None), (200, None)]))
+    monkeypatch.setattr(scanner, 'pinned_get', Mock(side_effect=[(302, intermediate), (307, destination), (200, None)]))
+    predict = Mock(return_value={'prediction': 'benign', 'available': True})
+    monkeypatch.setattr(index.production, 'predict', predict)
     result = client.post('/api/scan', json={'url': 'https://t.ly/token', 'check_redirect': True}).json()
     assert result['online']['status'] == 'complete'
-    assert [hop['method'] for hop in result['online']['chain']] == ['HEAD', 'GET', 'HEAD']
-    assert result['destination']['url'] == 'https://destination.example/landing'
+    assert [hop['method'] for hop in result['online']['chain']] == ['HEAD', 'GET'] * 3
+    assert result['online']['redirect_count'] == 2
+    assert result['online']['http_status'] == 200
+    assert result['prediction_target'] == 'destination'
+    assert result['destination']['url'] == destination
+    assert result['destination']['prediction'] == 'benign'
+    assert len(result['destination']['features']) == 19 and len(result['basic_features']) == 7
+    predict.assert_called_once()
+    assert predict.call_args.args[0]['url'] == destination
 
 
 def test_ordinary_url_with_no_redirect_is_predicted_from_initial_features(client, monkeypatch):
@@ -251,8 +262,9 @@ def test_resolver_tracks_relative_redirects_and_does_not_infer(client, monkeypat
     assert result['is_short_url'] is False and result['is_redirected'] is True
     assert result['redirect_count'] == 2 and result['destination_confirmed'] is True
     assert [row['url'] for row in result['redirect_chain']] == [
-        original, 'https://links.example/a/link', destination,
+        original, 'https://links.example/a/link', destination, destination,
     ]
+    assert [row['method'] for row in result['redirect_chain']] == ['HEAD', 'HEAD', 'HEAD', 'GET']
     assert result['resolution_status'] == 'RESOLVED' and result['http_status'] == 200
     assert result['error_code'] is None and result['error_message'] is None
     assert result['response_time_ms'] >= 0 and result['resolved_at']

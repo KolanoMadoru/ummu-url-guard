@@ -1,4 +1,6 @@
+import errno
 import socket
+import ssl
 import time
 from unittest.mock import Mock, call
 
@@ -154,11 +156,11 @@ def test_resolves_unlisted_host_relative_redirect_and_http_upgrade(monkeypatch):
 
 
 @pytest.mark.parametrize('head_status', [200, 302, 400, 405, 501])
-def test_header_only_get_reuses_an_unlisted_shorteners_pin_and_destination_uses_head(monkeypatch, head_status):
+def test_header_only_get_reuses_an_unlisted_shorteners_pin(monkeypatch, head_status):
     initial = 'https://short.example/token'
     destination = 'https://example.com/landing'
     dns = Mock(side_effect=[['93.184.216.34'], ['93.184.216.35']])
-    head = Mock(side_effect=[(head_status, None), (200, None)])
+    head = Mock(side_effect=[(head_status, None), (204, None)])
     get = Mock(return_value=(302, destination))
     monkeypatch.setattr(scanner, 'public_addresses', dns)
     monkeypatch.setattr(scanner, 'pinned_head', head)
@@ -171,7 +173,7 @@ def test_header_only_get_reuses_an_unlisted_shorteners_pin_and_destination_uses_
     assert result['chain'] == [
         {'url': initial, 'status': head_status, 'method': 'HEAD'},
         {'url': initial, 'status': 302, 'method': 'GET'},
-        {'url': destination, 'status': 200, 'method': 'HEAD'},
+        {'url': destination, 'status': 204, 'method': 'HEAD'},
     ]
     assert [args.args[0] for args in dns.call_args_list] == ['short.example', 'example.com']
     deadline = head.call_args_list[0].args[2]
@@ -179,18 +181,44 @@ def test_header_only_get_reuses_an_unlisted_shorteners_pin_and_destination_uses_
     assert head.call_args_list == [call(initial, '93.184.216.34', deadline), call(destination, '93.184.216.35', deadline)]
 
 
-def test_get_fallback_used_at_most_once(monkeypatch):
-    initial, destination = 'https://bit.ly/token', 'https://t.ly/next'
+def test_get_fallback_is_once_per_hop_including_later_head_200(monkeypatch):
+    urls = ['https://bit.ly/token', 'https://t.ly/next', 'https://example.com/done']
+    addresses = ['93.184.216.34', '93.184.216.35', '93.184.216.36']
+    lookup = Mock(side_effect=[[ip] for ip in addresses])
+    head = Mock(side_effect=[(405, None), (200, None), (204, None)])
+    get = Mock(side_effect=[(302, urls[1]), (307, urls[2])])
+    monkeypatch.setattr(scanner, 'public_addresses', lookup)
+    monkeypatch.setattr(scanner, 'pinned_head', head)
+    monkeypatch.setattr(scanner, 'pinned_get', get)
+
+    result = scanner.scan_url(urls[0])
+
+    assert result['resolution_status'] == 'RESOLVED'
+    assert result['final_url'] == urls[-1] and result['redirect_count'] == 2
+    assert [(item['url'], item['method'], item['status']) for item in result['redirect_chain']] == [
+        (urls[0], 'HEAD', 405), (urls[0], 'GET', 302),
+        (urls[1], 'HEAD', 200), (urls[1], 'GET', 307), (urls[2], 'HEAD', 204),
+    ]
+    deadline = head.call_args_list[0].args[2]
+    assert head.call_args_list == [call(url, ip, deadline) for url, ip in zip(urls, addresses)]
+    assert get.call_args_list == [call(url, ip, deadline) for url, ip in zip(urls[:2], addresses)]
+    assert lookup.call_count == 3
+
+
+def test_get_fallback_in_terminal_hop_can_confirm_final_url(monkeypatch):
+    initial, destination = 'https://bit.ly/token', 'https://example.com/done'
     monkeypatch.setattr(scanner, 'public_addresses', Mock(return_value=['93.184.216.34']))
-    monkeypatch.setattr(scanner, 'pinned_head', Mock(side_effect=[(405, None), (405, None)]))
-    get = Mock(return_value=(302, destination))
+    head = Mock(side_effect=[(302, destination), (405, None)])
+    get = Mock(return_value=(200, None))
+    monkeypatch.setattr(scanner, 'pinned_head', head)
     monkeypatch.setattr(scanner, 'pinned_get', get)
 
     result = scanner.scan_url(initial)
 
-    assert result['status'] == 'unavailable' and result['final_url'] is None
-    assert result['observed_url'] == destination
-    assert get.call_count == 1
+    assert result['resolution_status'] == 'RESOLVED'
+    assert result['final_url'] == destination and result['redirect_count'] == 1
+    assert [item['method'] for item in result['redirect_chain']] == ['HEAD', 'HEAD', 'GET']
+    get.assert_called_once_with(destination, '93.184.216.34', head.call_args_list[0].args[2])
 
 
 def test_get_fallback_cannot_follow_a_private_target(monkeypatch):
@@ -259,6 +287,79 @@ def test_exhausted_budget_skips_dns(monkeypatch):
     monkeypatch.setattr(scanner, 'public_addresses', dns)
     assert 'total time budget' in scanner.scan_url('https://t.ly/token')['reason']
     dns.assert_not_called()
+
+
+def test_total_budget_covers_get_fallback(monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(scanner.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(scanner, 'public_addresses', Mock(return_value=['93.184.216.34']))
+
+    def head(*args):
+        clock[0] = scanner.TOTAL_TIMEOUT
+        return 405, None
+
+    monkeypatch.setattr(scanner, 'pinned_head', head)
+    get = Mock()
+    monkeypatch.setattr(scanner, 'pinned_get', get)
+    result = scanner.resolve_url('https://t.ly/token')
+    assert result['resolution_status'] == 'TIMEOUT'
+    assert result['http_status'] == 405
+    get.assert_not_called()
+
+
+def test_connect_refusal_tries_one_other_validated_address_and_pins_get(monkeypatch):
+    hosts = ['93.184.216.34', '93.184.216.35', '93.184.216.36']
+    dns_lookup = Mock(return_value=dns(*hosts))
+    refused, head, get = Mock(), Mock(), Mock()
+    refused.connect.side_effect = ConnectionRefusedError(errno.ECONNREFUSED, 'refused')
+    head.recv.side_effect = [bytes([byte]) for byte in b'HTTP/1.1 405 Method Not Allowed\r\n\r\n']
+    get.recv.side_effect = [bytes([byte]) for byte in b'HTTP/1.1 200 OK\r\n\r\n']
+    transport = Mock(side_effect=[refused, head, get])
+    monkeypatch.setattr(scanner.socket, 'getaddrinfo', dns_lookup)
+    monkeypatch.setattr(scanner.socket, 'socket', transport)
+
+    result = scanner.resolve_url('http://example.com/token')
+
+    assert result['resolution_status'] == 'NO_REDIRECT'
+    assert [item['method'] for item in result['redirect_chain']] == ['HEAD', 'GET']
+    dns_lookup.assert_called_once()
+    refused.connect.assert_called_once_with((hosts[0], 80))
+    refused.sendall.assert_not_called()
+    head.connect.assert_called_once_with((hosts[1], 80))
+    get.connect.assert_called_once_with((hosts[1], 80))
+
+
+def test_tls_verification_failure_does_not_switch_addresses_or_try_get(monkeypatch):
+    monkeypatch.setattr(scanner, 'public_addresses', Mock(return_value=['93.184.216.34', '93.184.216.35']))
+    connection = Mock()
+    transport = Mock(return_value=connection)
+    context = Mock()
+    context.wrap_socket.side_effect = ssl.SSLCertVerificationError(1, 'invalid certificate')
+    monkeypatch.setattr(scanner.socket, 'socket', transport)
+    monkeypatch.setattr(scanner.ssl, 'create_default_context', Mock(return_value=context))
+
+    result = scanner.resolve_url('https://example.com/token')
+
+    assert result['resolution_status'] == 'NETWORK_ERROR'
+    assert not result['destination_confirmed']
+    transport.assert_called_once()
+    context.wrap_socket.assert_called_once_with(connection, server_hostname='example.com')
+    connection.sendall.assert_not_called()
+
+
+def test_access_block_on_get_remains_terminal(monkeypatch):
+    monkeypatch.setattr(scanner, 'public_addresses', Mock(return_value=['93.184.216.34']))
+    head = Mock(return_value=(405, None))
+    get = Mock(return_value=(403, None))
+    monkeypatch.setattr(scanner, 'pinned_head', head)
+    monkeypatch.setattr(scanner, 'pinned_get', get)
+
+    result = scanner.resolve_url('https://t.ly/token')
+
+    assert result['resolution_status'] == 'ACCESS_BLOCKED'
+    assert result['http_status'] == 403 and result['final_url'] is None
+    head.assert_called_once()
+    get.assert_called_once()
 
 
 def test_busy_is_distinct_from_failure_to_reach_a_destination(monkeypatch):

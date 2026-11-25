@@ -1,11 +1,12 @@
 """HTTP redirect scanner with pinned public IPs and verified TLS/SNI.
 
-Use HEAD first, with at most one header-only GET fallback per resolution.
+Use HEAD first, with at most one header-only GET fallback per hop.
 No environment proxies, cookies, response body reads, or automatic redirects.
 DNS runs in bounded worker slots.
 """
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime, timezone
+import errno
 import ipaddress
 import re
 import socket
@@ -23,6 +24,7 @@ MAX_HEADERS = 32768
 REDIRECT_STATUSES = frozenset((301, 302, 303, 307, 308))
 HEAD_FALLBACK_STATUSES = frozenset((400, 405, 501))
 BLOCKED_STATUSES = frozenset((401, 403, 407, 429))
+UNREACHABLE_ERRORS = frozenset((errno.ECONNREFUSED, errno.ENETUNREACH, errno.EHOSTUNREACH))
 # IPv6 transition mechanisms can route to embedded IPv4 addresses.
 TRANSITION_PREFIXES = tuple(map(ipaddress.IPv6Network, (
     "64:ff9b::/96", "64:ff9b:1::/48", "2001::/32", "2002::/16",
@@ -37,6 +39,10 @@ class ScanError(ValueError):
         super().__init__(message)
         self.code = code
         self.http_status = http_status
+
+
+class UnreachableAddress(OSError):
+    """The pinned address failed before any TLS or HTTP exchange."""
 
 
 def public_addresses(host: str, port: int, timeout: float) -> list[str]:
@@ -91,7 +97,12 @@ def _pinned_headers(url: str, ip: str, deadline: float, method: str) -> tuple[in
     sock = socket.socket(family, socket.SOCK_STREAM)
     try:
         sock.settimeout(timeout)
-        sock.connect((ip, port))
+        try:
+            sock.connect((ip, port))
+        except OSError as error:
+            if error.errno in UNREACHABLE_ERRORS:
+                raise UnreachableAddress from None
+            raise
         if p.scheme == "https":
             sock.settimeout(remaining_time(request_deadline, timed_out))
             sock = ssl.create_default_context().wrap_socket(sock, server_hostname=p.hostname)
@@ -175,7 +186,6 @@ def _scan(value: str, normalized: str, start: float, original_domain: str, is_sh
     deadline = start + TOTAL_TIMEOUT
     chain = []
     seen = set()
-    used_get = False
     observed_url = None
     last_observed_url = None
     redirect_count = 0
@@ -189,6 +199,7 @@ def _scan(value: str, normalized: str, start: float, original_domain: str, is_sh
         )
 
     def request_headers(send, method, ip):
+        remaining_time(deadline)
         try:
             status, location = send(current, ip, deadline)
         except ScanError as error:
@@ -215,13 +226,19 @@ def _scan(value: str, normalized: str, start: float, original_domain: str, is_sh
             observed_url = current if hop else None
             last_observed_url = current
             ip = addresses[0]
-            status, location = request_headers(pinned_head, "HEAD", ip)
+            try:
+                status, location = request_headers(pinned_head, "HEAD", ip)
+            except UnreachableAddress:
+                # Reuse this hop's fully validated DNS answers. TLS and HTTP errors stop the check.
+                if len(addresses) == 1:
+                    raise
+                ip = addresses[1]
+                status, location = request_headers(pinned_head, "HEAD", ip)
             needs_fallback = (
-                (hop == 0 and 200 <= status < 300) or status in HEAD_FALLBACK_STATUSES
+                (200 <= status < 300 and status not in (204, 205)) or status in HEAD_FALLBACK_STATUSES
                 or (status in REDIRECT_STATUSES and not location)
             )
-            if not used_get and needs_fallback:
-                used_get = True
+            if needs_fallback:
                 status, location = request_headers(pinned_get, "GET", ip)
             if status in REDIRECT_STATUSES:
                 if not location:

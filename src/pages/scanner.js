@@ -76,7 +76,7 @@ function predictionFor(scan) {
   if (scan.destination) return scan.destination;
   if (scan.fallback) return scan.fallback;
   if (knownShortLink(scan) || observedRedirect(scan.online)) return null;
-  return scan.predictionTarget === null ? null : scan.initial;
+  return scan.predictionTarget === "initial" || scan.predictionTarget === undefined ? scan.initial : null;
 }
 
 function fallbackFor(scan, result) {
@@ -89,6 +89,24 @@ function fallbackFor(scan, result) {
     ...prediction, model_version: fallback.version,
     browser_prediction: true, model_label: "Random Forest E1 · 7 fitur",
   };
+}
+
+function scanFromResult(result, model, requestedUrl, previousId) {
+  const { online, prediction_target: predictionTarget } = result;
+  const confirmed = confirmedDestination(result);
+  const mayPredictInitial = !confirmed && !result.shortener_provider && !online.is_short_url &&
+    (predictionTarget === "initial" || (predictionTarget === undefined && !observedRedirect(online)));
+  const initial = mayPredictInitial ? withBrowserPrediction(result, model) : result;
+  const scan = {
+    url: result.initial_url ?? requestedUrl,
+    initial: previousId ? { ...initial, id: previousId } : initial,
+    model,
+    destination: confirmed ? withBrowserPrediction(result.destination, model) : null,
+    online,
+    predictionTarget,
+  };
+  scan.fallback = scan.destination ? null : fallbackFor(scan, result);
+  return scan;
 }
 
 function typosquattingRows(result) {
@@ -235,10 +253,7 @@ export function mount() {
         timeoutMs: 40000,
       });
       if (request.signal.aborted) return;
-      scan.online = result.online;
-      scan.predictionTarget = result.prediction_target;
-      scan.destination = confirmedDestination(result) ? withBrowserPrediction(result.destination, scan.model) : null;
-      scan.fallback = scan.destination ? null : fallbackFor(scan, result);
+      scan = scanFromResult(result, scan.model, scan.url, scan.initial.id);
     } catch (failure) {
       if (request.signal.aborted) return;
       const timeout = failure.status === 504 || failure.message.startsWith("Request timed out.");
@@ -287,14 +302,7 @@ export function mount() {
         automaticResearch.activeModel(),
       ]);
       if (request.signal.aborted) return;
-      const initial = result.shortener_provider || result.online.is_short_url || result.prediction_target === null
-        ? result : withBrowserPrediction(result, model);
-      scan = {
-        url: result.initial_url ?? url, initial, model, destination: null, fallback: null,
-        online: result.online, predictionTarget: result.prediction_target,
-      };
-      scan.destination = confirmedDestination(result) ? withBrowserPrediction(result.destination, model) : null;
-      scan.fallback = scan.destination ? null : fallbackFor(scan, result);
+      scan = scanFromResult(result, model, url);
       updateResult();
     } catch (failure) {
       if (!request.signal.aborted) showError(error, failure);
