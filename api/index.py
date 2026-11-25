@@ -160,7 +160,9 @@ def extraction_or_error(value):
 
 
 def online_scan_enabled():
-    return os.getenv("ONLINE_SCAN_ENABLED", "0") == "1"
+    # Hosted scanner is available by default; explicit 0 always opts out.
+    default = "1" if os.getenv("VERCEL") == "1" else "0"
+    return os.getenv("ONLINE_SCAN_ENABLED", default) == "1"
 
 
 async def redirect_result(original_url, normalized_url, *, requested):
