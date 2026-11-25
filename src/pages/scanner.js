@@ -6,10 +6,6 @@ import { automaticResearch } from "../utils/automatic-research.js";
 import { predictBrowserForest } from "../utils/browser-prediction.js";
 
 const unavailable = "Tidak Tersedia";
-const fallbackFailures = new Set([
-  "TIMEOUT", "DNS_ERROR", "NETWORK_ERROR", "HTTP_ERROR", "ACCESS_BLOCKED",
-  "REDIRECT_LOOP", "MAX_REDIRECT_EXCEEDED", "UNSUPPORTED_REDIRECT", "UNSAFE_DESTINATION",
-]);
 const retryableFailures = new Set(["TIMEOUT", "DNS_ERROR", "NETWORK_ERROR", "BUSY"]);
 const redirectStatuses = new Set([301, 302, 303, 307, 308]);
 
@@ -45,7 +41,7 @@ function predictionRows(result, label) {
     [label, result?.prediction ? classLabel(result.prediction) : unavailable],
     ["Estimasi phishing", percent(result?.probability)],
     ["Versi model", result?.model_version ?? unavailable],
-    ...(result?.browser_prediction ? [["Model penelitian", result.model_label ?? "Random Forest · 19 fitur"]] : []),
+    ...(result?.browser_prediction ? [["Model penelitian", "Random Forest · 19 fitur"]] : []),
   ];
 }
 
@@ -64,40 +60,53 @@ function observedRedirect(online) {
     (online.redirect_chain ?? online.chain)?.some(({ status }) => redirectStatuses.has(status)));
 }
 
+function isShorteningService(destination) {
+  return Boolean(destination?.shortener_service || destination?.shortener_provider || destination?.features?.shortener);
+}
+
 function confirmedDestination(result) {
   const { online, destination } = result;
-  if (!destination || !online.final_url || destination.url !== online.final_url) return false;
-  return "destination_confirmed" in online
-    ? online.destination_confirmed === true
-    : online.status === "complete" && online.redirect_count > 0;
+  return Boolean(destination?.url && destination.url === online.final_url &&
+    online.destination_confirmed === true && online.resolution_status === "RESOLVED" &&
+    Number.isInteger(online.http_status) && online.http_status >= 200 && online.http_status < 300 &&
+    Number.isInteger(online.redirect_count) && online.redirect_count > 0 &&
+    destination.features?.shortener === 0 && !isShorteningService(destination));
 }
 
 function predictionFor(scan) {
   if (scan.destination) return scan.destination;
-  if (scan.fallback) return scan.fallback;
   if (knownShortLink(scan) || observedRedirect(scan.online)) return null;
   return scan.predictionTarget === "initial" || scan.predictionTarget === undefined ? scan.initial : null;
 }
 
-function fallbackFor(scan, result) {
-  const fallback = scan.model?.fallback;
-  if (!scan.initial.shortener_provider || !fallbackFailures.has(result.online.resolution_status)
-      || fallback?.qualification?.basis !== "url_awal" || typeof fallback.version !== "string") return null;
-  const prediction = predictBrowserForest(fallback.forest, scan.initial, { basic: true });
-  if (!prediction) return null;
+function unconfirmedResolution({ online, destination }) {
+  const stoppedAtShortener = destination?.url && destination.url === online.final_url &&
+    isShorteningService(destination);
   return {
-    ...prediction, model_version: fallback.version,
-    browser_prediction: true, model_label: "Random Forest E1 · 7 fitur",
+    ...online,
+    status: "unavailable",
+    resolution_status: "UNSUPPORTED_REDIRECT",
+    destination_confirmed: false,
+    final_url: null,
+    last_observed_url: stoppedAtShortener ? destination.url : online.last_observed_url,
+    error_message: stoppedAtShortener
+      ? "Redirect stopped at a URL shortening service; the final destination is unconfirmed."
+      : "URL tujuan akhir belum terkonfirmasi.",
   };
 }
 
 function scanFromResult(result, model, requestedUrl, previousId) {
-  const { online, prediction_target: predictionTarget } = result;
   const confirmed = confirmedDestination(result);
+  const claimsDestination = result.online.destination_confirmed === true ||
+    result.online.resolution_status === "RESOLVED" ||
+    (result.online.status === "complete" && (result.prediction_target === "destination" || result.destination));
+  const rejected = !confirmed && claimsDestination;
+  const online = rejected ? unconfirmedResolution(result) : result.online;
+  const predictionTarget = rejected || (!confirmed && result.destination) ? null : result.prediction_target;
   const mayPredictInitial = !confirmed && !result.shortener_provider && !online.is_short_url &&
-    (predictionTarget === "initial" || (predictionTarget === undefined && !observedRedirect(online)));
+    !observedRedirect(online) && (predictionTarget === "initial" || predictionTarget === undefined);
   const initial = mayPredictInitial ? withBrowserPrediction(result, model) : result;
-  const scan = {
+  return {
     url: result.initial_url ?? requestedUrl,
     initial: previousId ? { ...initial, id: previousId } : initial,
     model,
@@ -105,8 +114,6 @@ function scanFromResult(result, model, requestedUrl, previousId) {
     online,
     predictionTarget,
   };
-  scan.fallback = scan.destination ? null : fallbackFor(scan, result);
-  return scan;
 }
 
 function typosquattingRows(result) {
@@ -120,7 +127,7 @@ function typosquattingRows(result) {
 }
 
 function renderResult(scan) {
-  const { initial, destination, fallback, online, saved } = scan;
+  const { initial, destination, online, saved } = scan;
   const shortLink = knownShortLink(scan);
   const prediction = predictionFor(scan);
   const basic = new Set(initial.basic_features);
@@ -157,8 +164,7 @@ function renderResult(scan) {
       ...typosquattingRows(initial),
       ["Waktu Pemindaian", initial.timestamp],
     ])}
-    ${fallback ? '<p class="hint">Prediksi berdasarkan URL awal. URL tujuan belum dapat dikonfirmasi sehingga analisis domain tujuan belum dilakukan. Skor model belum dikalibrasi.</p>'
-      : prediction === initial ? `<p class="hint">${escape(displayText(initial.probability_label || initial.reason || ""))}</p>`
+    ${prediction === initial ? `<p class="hint">${escape(displayText(initial.probability_label || initial.reason || ""))}</p>`
       : '<p class="hint">Prediksi tujuan tersedia setelah pengalihan HTTP terkonfirmasi dan model yang sesuai tersedia.</p>'}
     ${saved
       ? '<p class="hint">Riwayat menyimpan asal URL di browser ini.</p>'
@@ -263,7 +269,6 @@ export function mount() {
         reason: timeout ? "Pemeriksaan redirect melebihi batas waktu." : errorText(failure),
       };
       scan.destination = null;
-      scan.fallback = null;
       scan.predictionTarget = null;
     } finally {
       if (!request.signal.aborted) {

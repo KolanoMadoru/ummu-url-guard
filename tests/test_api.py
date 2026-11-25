@@ -182,8 +182,39 @@ def test_scan_does_not_report_the_shortener_itself_as_a_destination(client, monk
     assert result['prediction_target'] is None
 
 
+@pytest.mark.parametrize(('intermediate', 'http_status', 'resolution_status'), [
+    ('https://t.ly/next', 403, 'ACCESS_BLOCKED'),
+    ('https://t.ly/next', 200, 'UNSUPPORTED_REDIRECT'),
+    ('https://bit.ly/', 204, 'UNSUPPORTED_REDIRECT'),
+])
+def test_scan_keeps_a_terminal_shortener_as_an_unconfirmed_intermediate(
+    client, monkeypatch, intermediate, http_status, resolution_status,
+):
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
+    monkeypatch.setattr(scanner.socket, 'getaddrinfo', lambda *_a, **_kw: dns_response('93.184.216.34'))
+    monkeypatch.setattr(scanner, 'pinned_head', Mock(side_effect=[(302, intermediate), (http_status, None)]))
+    get = Mock(return_value=(http_status, None))
+    monkeypatch.setattr(scanner, 'pinned_get', get)
+    predict = Mock()
+    monkeypatch.setattr(index.production, 'predict', predict)
+
+    result = client.post('/api/scan', json={'url': 'https://t.ly/token', 'check_redirect': True}).json()
+
+    online = result['online']
+    assert online['status'] == 'unavailable' and online['resolution_status'] == resolution_status
+    assert online['http_status'] == http_status and online['redirect_count'] == 1
+    assert online['destination_confirmed'] is False
+    assert online['last_observed_url'] == online['observed_url'] == intermediate
+    assert online['final_url'] is None and online['final_domain'] is None
+    assert len(result['features']) == 19 and result['features']['shortener'] == 1
+    assert result['destination'] is None and result['prediction_target'] is None
+    assert result['prediction'] is None and result['available'] is False
+    assert get.call_count == int(http_status == 200)
+    predict.assert_not_called()
+
+
 def test_scan_recovers_get_redirects_at_multiple_hops(client, monkeypatch):
-    intermediate = 'https://bridge.example/path'
+    intermediate = 'https://t.ly/next'
     destination = 'https://destination.example/landing'
     monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
     monkeypatch.setattr(scanner.socket, 'getaddrinfo', lambda *_a, **_kw: dns_response('93.184.216.34'))
