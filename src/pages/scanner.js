@@ -48,8 +48,14 @@ function featureNumber(value) {
   return Number.isInteger(value) ? value : value.toFixed(4);
 }
 
+function predictionFor(scan) {
+  return scan.initial.shortener_provider ? scan.destination : scan.initial;
+}
+
 function renderResult(scan) {
   const { initial, destination, online, saved } = scan;
+  const shortLink = Boolean(initial.shortener_provider);
+  const prediction = predictionFor(scan);
   const basic = new Set(initial.basic_features);
   const reason = online.status === "not_requested" && !initial.shortener_provider
     ? "Redirect checks require a recognized short link with a token."
@@ -57,14 +63,19 @@ function renderResult(scan) {
   const networkReason = reason
     ? displayText(reason)
     : online.status === "complete" ? "Header HTTP diterima." : displayText(online.status);
-  const initialTitle = initial.prediction
-    ? `Prediksi ${classLabel(initial.prediction)}`
+  let title = prediction?.prediction
+    ? `Prediksi ${classLabel(prediction.prediction)}`
     : "Prediksi Tidak Tersedia — model belum dilatih";
-  return `<section class="card result ${escape(initial.prediction || "unavailable")}">
-    <div class="result-heading"><i data-lucide="shield"></i><div><span class="eyebrow">URL AWAL</span><h2>${escape(initialTitle)}</h2></div></div>
+  if (shortLink && !destination) {
+    title = online.status === "not_requested"
+      ? "Prediksi menunggu URL tujuan"
+      : "Prediksi tidak tersedia — URL tujuan belum terkonfirmasi";
+  }
+  return `<section class="card result ${escape(prediction?.prediction || "unavailable")}">
+    <div class="result-heading"><i data-lucide="shield"></i><div><span class="eyebrow">${shortLink ? "PREDIKSI BERDASARKAN URL TUJUAN" : "URL AWAL"}</span><h2>${escape(title)}</h2></div></div>
     ${table(["Properti", "Pengamatan"], [
       ["URL Awal", scan.url],
-      ...predictionRows(initial, "Prediksi URL Awal"),
+      ...(!shortLink ? predictionRows(initial, "Prediksi URL Awal") : []),
       ["Penyedia URL pendek", shortenerLabel(initial)],
       ["Indikator Typosquatting", initial.typosquatting.indicator ? "Terdeteksi, mungkin positif palsu" : "Tidak terdeteksi"],
       ["Domain referensi", initial.typosquatting.reference],
@@ -72,7 +83,9 @@ function renderResult(scan) {
       ["Perubahan karakter", displayText(initial.typosquatting.change)],
       ["Waktu Pemindaian", initial.timestamp],
     ])}
-    <p class="hint">${escape(displayText(initial.probability_label || initial.reason || ""))}</p>
+    ${shortLink
+      ? '<p class="hint">Prediksi tautan pendek dihitung dari URL tujuan yang terkonfirmasi.</p>'
+      : `<p class="hint">${escape(displayText(initial.probability_label || initial.reason || ""))}</p>`}
     ${saved
       ? '<p class="hint">Riwayat menyimpan asal URL di browser ini.</p>'
       : `<p class="error">${escape(displayText(getStorageWarning()))}</p>`}
@@ -120,7 +133,7 @@ export function render() {
         <button class="button" id="scan-button"><i data-lucide="scan-line"></i> Pindai URL</button>
         <button class="button secondary" type="reset">Hapus</button>
       </div>
-      <p class="hint">Pemindaian awal menghitung ciri URL. Pemeriksaan redirect dimulai dengan HEAD dan dapat membaca header GET dari layanan pemendek yang dikenal.</p>
+      <p class="hint">Untuk tautan pendek, pilih Periksa Tujuan Redirect agar model dapat menilai URL tujuan.</p>
     </form><p class="error" id="scan-error" role="alert" hidden></p><p id="scan-progress" role="status"></p></section>
     <div id="scan-result" aria-live="polite"></div><div class="notice">Hasil prediksi machine learning merupakan indikator dan bukan jaminan keamanan suatu website.</div>`;
 }
@@ -134,8 +147,13 @@ export function mount() {
   let scan, pending;
 
   function updateResult() {
+    const prediction = predictionFor(scan);
     scan.saved = saveScan({
       ...scan.initial,
+      prediction: prediction?.prediction ?? null,
+      probability: prediction?.probability ?? null,
+      model_version: prediction?.model_version ?? null,
+      prediction_source: prediction?.prediction ? (scan.destination ? "destination" : "initial") : null,
       online: { ...scan.online, final_url: scan.destination?.url ?? null },
     });
     output.innerHTML = renderResult(scan);
@@ -157,7 +175,9 @@ export function mount() {
       });
       if (request.signal.aborted) return;
       scan.online = result.online;
-      scan.destination = result.destination && withBrowserPrediction(result.destination, scan.model);
+      const confirmed = result.online.status === "complete" && result.online.redirect_count > 0 &&
+        result.destination && result.destination.url === result.online.final_url;
+      scan.destination = confirmed ? withBrowserPrediction(result.destination, scan.model) : null;
     } catch (failure) {
       if (request.signal.aborted) return;
       const timeout = failure.status === 504 || failure.message.startsWith("Request timed out.");
@@ -203,7 +223,7 @@ export function mount() {
         automaticResearch.activeModel(),
       ]);
       if (request.signal.aborted) return;
-      const initial = withBrowserPrediction(result, model);
+      const initial = result.shortener_provider ? result : withBrowserPrediction(result, model);
       scan = { url: result.initial_url ?? url, initial, model, destination: null, online: result.online };
       updateResult();
     } catch (failure) {

@@ -23,6 +23,7 @@ for (const width of [1280, 390, 320]) {
     await page.goto("/");
     await expect(page.locator("html")).toHaveAttribute("lang", "id");
     await expect(page).toHaveTitle("UMMU URL GUARD");
+    await expect(page.getByText("Dikembangkan untuk Penelitian", { exact: true })).toHaveCount(0);
     for (const [route, label, heading = label] of pages) {
       if (width < 760) await page.getByRole("button", { name: "Buka atau tutup navigasi" }).click();
       await page.getByRole("navigation").getByRole("link", { name: label, exact: true }).click();

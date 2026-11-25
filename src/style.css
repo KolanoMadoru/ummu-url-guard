@@ -127,27 +127,6 @@ nav a.active {
   background: #eff6ff;
   font-weight: 700;
 }
-.sidebar-note {
-  padding: 17px;
-  background: #f8fafc;
-  border: 1px solid #edf2f7;
-  border-radius: 9px;
-  margin: 30px 6px 20px;
-}
-.sidebar-note svg {
-  color: #2563eb;
-  display: block;
-  margin-bottom: 10px;
-}
-.sidebar-note strong {
-  font-size: 12px;
-}
-.sidebar-note p {
-  font-size: 11px;
-  line-height: 1.7;
-  color: #64748b;
-  margin-bottom: 0;
-}
 .sidebar-footer {
   margin-top: auto;
   padding: 13px 8px 0;
@@ -740,9 +719,6 @@ li {
   .stat-label {
     font-size: 10px;
   }
-  .sidebar-note {
-    margin-top: 20px;
-  }
 }
 @media (max-width: 760px) {
   #sidebar {
@@ -848,9 +824,6 @@ li {
   }
   td {
     font-size: 10px;
-  }
-  .sidebar-note {
-    display: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {

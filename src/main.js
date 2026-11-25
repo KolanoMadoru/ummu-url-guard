@@ -17,7 +17,6 @@ import {
   TextCursorInput,
   Info,
   Shield,
-  GraduationCap,
   Menu,
 } from "lucide";
 const icons = {
@@ -36,7 +35,6 @@ const icons = {
   TextCursorInput,
   Info,
   Shield,
-  GraduationCap,
   Menu,
 };
 import { api } from "./utils/api.js";
@@ -78,7 +76,7 @@ const state = { health: null };
 let cleanupPage;
 
 document.querySelector("#app").innerHTML =
-  `<aside id="sidebar"><a class="brand" href="#dashboard"><span class="brand-mark"><i data-lucide="shield-check"></i></span><span>UMMU <b>URL GUARD</b></span></a><p class="nav-label">MENU UTAMA</p><nav aria-label="Navigasi utama">${navigation.map(([key, label, icon]) => `<a href="#${key}" data-page="${key}"><i data-lucide="${icon}"></i>${label}</a>`).join("")}</nav><div class="sidebar-note"><i data-lucide="graduation-cap"></i><strong>Dikembangkan untuk Penelitian</strong><p>Fitur nyata, eksperimen yang dapat direproduksi, dan hasil penelitian yang dapat diverifikasi.</p></div><div class="sidebar-footer">UMMU URL GUARD <span>v0.1.0</span></div></aside>
+  `<aside id="sidebar"><a class="brand" href="#dashboard"><span class="brand-mark"><i data-lucide="shield-check"></i></span><span>UMMU <b>URL GUARD</b></span></a><p class="nav-label">MENU UTAMA</p><nav aria-label="Navigasi utama">${navigation.map(([key, label, icon]) => `<a href="#${key}" data-page="${key}"><i data-lucide="${icon}"></i>${label}</a>`).join("")}</nav><div class="sidebar-footer">UMMU URL GUARD <span>v0.1.0</span></div></aside>
   <div class="workspace"><header><div class="header-left"><button id="menu-toggle" class="icon-button" aria-label="Buka atau tutup navigasi" aria-expanded="false" aria-controls="sidebar"><i data-lucide="menu"></i></button><span>Deteksi Phishing pada URL Pendek dan Domain Typosquatting</span></div><span id="api-status" class="connection"><span class="status-dot"></span>Menghubungkan API</span></header><main id="content" tabindex="-1"></main><footer>Dibuat oleh Muhammad Rahman Muttaqin | NPM: 12105 55201 21 162</footer><p id="storage-warning" class="error" role="status"></p></div>`;
 // Localize native form validation independently of the browser's UI language.
 document.addEventListener("invalid", (event) => {

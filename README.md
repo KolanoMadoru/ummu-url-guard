@@ -22,9 +22,9 @@ Dataset, model, dan hasil riset tidak disertakan. Label historis dan keluaran mo
 
 ## Perbandingan URL pendek
 
-Di **Pemindai URL**, gunakan **Pindai URL** untuk menghitung fitur dan prediksi URL awal. Tautan bertoken dari layanan pemendek yang dikenal menampilkan tombol **Periksa Tujuan Redirect**. Aktifkan `ONLINE_SCAN_ENABLED=1` pada server untuk mengizinkan pemeriksaan. Pemindai mencoba HEAD lebih dulu. Bila perlu, pemindai dapat mencoba satu GET pada tautan pemendek yang dikenali dan menutup koneksi setelah membaca header. Status dan metode setiap tahap ditampilkan bersama rantai pengalihan.
+Di **Pemindai URL**, gunakan **Pindai URL** untuk menghitung fitur URL yang dimasukkan. Untuk URL biasa, model langsung menilai URL itu. Untuk tautan bertoken dari layanan pemendek yang dikenal, klik **Periksa Tujuan Redirect**. Prediksi benign atau phishing dihitung hanya dari URL tujuan akhir yang terkonfirmasi. Aktifkan `ONLINE_SCAN_ENABLED=1` pada server untuk mengizinkan pemeriksaan. Pemindai mencoba HEAD lebih dulu. Bila perlu, pemindai dapat mencoba satu GET pada tautan pemendek yang dikenali dan menutup koneksi setelah membaca header. Status dan metode setiap tahap ditampilkan bersama rantai pengalihan.
 
-Pemindai menampilkan fitur awal dan tujuan berdampingan. Penanda **Dasar** menunjukkan tujuh fitur yang juga termasuk dalam 19 fitur lengkap. Jika model tersedia, masing-masing URL memperoleh prediksi dan skor dari model yang sama. Skor tersebut belum dikalibrasi. Jika lokasi publik sudah teramati tetapi respons tujuan belum dapat dikonfirmasi, pemindai menampilkan lokasi itu secara terpisah dan memberi nilai N/A untuk fitur tujuan. Pemeriksaan hanya mengikuti pengalihan HTTP. Tujuan dapat berbeda pada waktu lain atau untuk klien lain.
+Pemindai menampilkan fitur awal dan tujuan berdampingan. Penanda **Dasar** menunjukkan tujuh fitur yang juga termasuk dalam 19 fitur lengkap. Skor model belum dikalibrasi. Jika lokasi publik sudah teramati tetapi respons tujuan belum dapat dikonfirmasi, pemindai menampilkan lokasi itu secara terpisah dan menandai prediksi serta fitur tujuan sebagai N/A. Pemeriksaan hanya mengikuti pengalihan HTTP. Tujuan dapat berbeda pada waktu lain atau untuk klien lain. Riwayat mencatat dasar prediksi dan menyamarkan asal URL.
 
 ### Cakupan URL pendek dalam dataset
 
@@ -93,7 +93,7 @@ Laporan lama dalam format `research-summary.json` masih dapat diimpor secara ops
 | `GET /api/health` | — | API readiness and deployed-model status |
 | `POST /api/features` | JSON `{ "url": "https://example.com" }` | Ordered features, definitions, types, similarity |
 | `POST /api/predict` | URL JSON | Lexical features and deployed prediction, or explicit unavailable state |
-| `POST /api/scan` | JSON dengan `url` dan `check_redirect` opsional | Prediksi dan fitur URL awal. Jika pemeriksaan eksplisit berhasil, respons juga memuat analisis tujuan. |
+| `POST /api/scan` | JSON dengan `url` dan `check_redirect` opsional | Fitur URL awal. Prediksi URL biasa berada di level atas. Untuk tautan pendek, prediksi berada di `destination` ketika tujuan terkonfirmasi. |
 | `POST /api/research/features` | JSON daftar URL terbatas | Fitur leksikal dan kunci pengelompokan dalam urutan input |
 | `POST /api/research/train/{E1…E6}` | Byte matriks, label, split, dan indikator | Satu hasil eksperimen. E2 menyertakan forest numerik. |
 | `POST /api/dataset/analyze` | Multipart field `file` | Validated counts, hash, masked preview |
