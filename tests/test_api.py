@@ -41,6 +41,7 @@ def test_scan_features_survive_online_failure_without_short_link_prediction(clie
 
 def test_scan_defaults_to_offline_and_shares_the_original_url_features(client, monkeypatch):
     monkeypatch.delenv('ONLINE_SCAN_ENABLED', raising=False)
+    monkeypatch.delenv('VERCEL', raising=False)
     payload = {'url': 'HTTPS://BÜCHER.de:443/über'}
     scan = client.post('/api/scan', json=payload).json()
     features = client.post('/api/features', json=payload).json()
@@ -410,3 +411,11 @@ def test_research_train_consumes_bounded_binary_requests(client):
     assert client.post(path + 'E4', content=payload[:-1], headers=content_type).status_code == 422
     too_large = b'x' * (index.MAX_BROWSER_TRAINING_BYTES + 1)
     assert client.post(path + 'E4', content=too_large, headers=content_type).status_code == 413
+
+
+def test_vercel_redirect_default_respects_explicit_opt_out(monkeypatch):
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.delenv("ONLINE_SCAN_ENABLED", raising=False)
+    assert index.online_scan_enabled()
+    monkeypatch.setenv("ONLINE_SCAN_ENABLED", "0")
+    assert not index.online_scan_enabled()
