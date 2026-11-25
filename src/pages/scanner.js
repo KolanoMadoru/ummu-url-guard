@@ -107,7 +107,9 @@ function renderResult(scan) {
   const prediction = predictionFor(scan);
   const basic = new Set(initial.basic_features);
   const status = online.resolution_status ?? online.status;
-  const networkReason = displayText(online.error_message || online.reason || status);
+  const networkReason = status === "DISABLED" || status === "disabled"
+    ? "Aktifkan ONLINE_SCAN_ENABLED=1 pada Vercel, lalu deploy ulang."
+    : displayText(online.error_message || online.reason || status);
   const chain = online.redirect_chain ?? online.chain ?? [];
   const lastObserved = online.last_observed_url ?? online.observed_url;
   const retryLabel = retryableFailures.has(status) || (!online.resolution_status &&
@@ -116,10 +118,12 @@ function renderResult(scan) {
   let title = prediction?.prediction
     ? `Prediksi ${classLabel(prediction.prediction)}`
     : "Prediksi Tidak Tersedia — model belum dilatih";
-  if (!prediction) {
-    title = status === "NOT_REQUESTED" || status === "not_requested"
-      ? "Prediksi menunggu URL tujuan"
-      : "Prediksi tidak tersedia — URL tujuan belum terkonfirmasi";
+  if (!prediction && (shortLink || observedRedirect(online) || scan.predictionTarget === null)) {
+    title = status === "DISABLED" || status === "disabled"
+      ? "Pemeriksaan redirect dinonaktifkan oleh konfigurasi server"
+      : status === "NOT_REQUESTED" || status === "not_requested"
+        ? "Prediksi menunggu URL tujuan"
+        : `Prediksi tidak tersedia — ${displayText(status)}`;
   }
   const source = destination || (!prediction && (shortLink || observedRedirect(online)))
     ? "PREDIKSI BERDASARKAN URL TUJUAN"
@@ -189,7 +193,7 @@ export function render() {
         <button class="button" id="scan-button"><i data-lucide="scan-line"></i> Pindai URL</button>
         <button class="button secondary" type="reset">Hapus</button>
       </div>
-      <p class="hint">Pilih Periksa Tujuan Redirect untuk menelusuri header HTTP melalui server, termasuk pada URL dari penyedia yang belum dikenali.</p>
+      <p class="hint">Pindai URL akan menelusuri pengalihan HTTP melalui server secara otomatis. URL dikirim ke server dan dapat diakses melalui pemeriksaan jaringan terbatas.</p>
     </form><p class="error" id="scan-error" role="alert" hidden></p><p id="scan-progress" role="status"></p></section>
     <div id="scan-result" aria-live="polite"></div><div class="notice">Hasil prediksi machine learning merupakan indikator dan bukan jaminan keamanan suatu website.</div>`;
 }
@@ -228,7 +232,7 @@ export function mount() {
       const result = await api("scan", {
         json: { url: scan.url, check_redirect: true },
         signal: request.signal,
-        timeoutMs: 24000,
+        timeoutMs: 40000,
       });
       if (request.signal.aborted) return;
       scan.online = result.online;
@@ -276,10 +280,10 @@ export function mount() {
     scan = null;
     const url = form.querySelector("input").value;
     busy(submit, true);
-    progress.textContent = "Memvalidasi URL dan mengekstraksi fitur URL awal…";
+    progress.textContent = "Memvalidasi URL, menelusuri pengalihan melalui server, dan mengekstraksi fitur…";
     try {
       const [result, model] = await Promise.all([
-        api("scan", { json: { url }, signal: request.signal }),
+        api("scan", { json: { url, check_redirect: true }, signal: request.signal, timeoutMs: 40000 }),
         automaticResearch.activeModel(),
       ]);
       if (request.signal.aborted) return;
@@ -289,6 +293,8 @@ export function mount() {
         url: result.initial_url ?? url, initial, model, destination: null, fallback: null,
         online: result.online, predictionTarget: result.prediction_target,
       };
+      scan.destination = confirmedDestination(result) ? withBrowserPrediction(result.destination, model) : null;
+      scan.fallback = scan.destination ? null : fallbackFor(scan, result);
       updateResult();
     } catch (failure) {
       if (!request.signal.aborted) showError(error, failure);
