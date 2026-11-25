@@ -15,7 +15,7 @@ import threading
 import time
 from urllib.parse import urlsplit, urljoin, urlunsplit
 
-from ml.features import normalize_url, registered_domain, shortener_provider
+from ml.features import normalize_url, registered_domain, shortener_provider, shortener_service
 
 MAX_REDIRECTS = 10
 REQUEST_TIMEOUT = 5.0
@@ -261,6 +261,11 @@ def _scan(value: str, normalized: str, start: float, original_domain: str, is_sh
                 raise ScanError(f"Server returned HTTP {status}.", "HTTP_ERROR")
             if not hop:
                 return finish("NO_REDIRECT")
+            if shortener_service(p.hostname):
+                raise ScanError(
+                    "Redirect stopped at a URL shortening service; the final destination is unconfirmed.",
+                    "UNSUPPORTED_REDIRECT",
+                )
             return finish("RESOLVED", final_url=current, final_domain=registered_domain(p.hostname))
     except ScanError as error:
         return finish(error.code, str(error))

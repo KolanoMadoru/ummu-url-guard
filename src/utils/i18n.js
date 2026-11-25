@@ -74,6 +74,7 @@ const messages = {
   "Redirect loop detected.": "Pengalihan berulang terdeteksi.",
   "Server does not support HEAD; no body fallback was attempted.": "Server tidak mendukung HEAD; isi halaman tidak diunduh sebagai alternatif.",
   "Redirect has no Location header.": "Pengalihan tidak memiliki header Location.",
+  "Redirect stopped at a URL shortening service; the final destination is unconfirmed.": "Pengalihan berhenti di layanan pemendek. URL tujuan akhir belum terkonfirmasi.",
   "Maximum of 5 redirects reached.": "Batas maksimal 5 pengalihan tercapai.",
   "HTTP Refresh is not supported.": "Pengalihan HTTP Refresh belum didukung.",
   "Redirect destination is not a valid public HTTP(S) URL.": "URL tujuan redirect harus berupa HTTP atau HTTPS publik yang valid.",

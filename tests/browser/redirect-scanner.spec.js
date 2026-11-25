@@ -153,6 +153,59 @@ test("shows an observed public URL separately when the final destination cannot 
   await expectPendingHistory(page);
 });
 
+for (const [caseName, getIntermediate] of [["token", () => origin], ["homepage", () => homepage]]) {
+  test(`shows a terminal shortener ${caseName} only as an unconfirmed hop in a stale response`, async ({ page }) => {
+    const intermediate = getIntermediate();
+    await page.route("**/api/scan", (route) => {
+      const result = initialResult(unrecognized, unrecognizedURL, network("not_requested", null));
+      confirmedDestination(result);
+      Object.assign(result.destination, intermediate);
+      Object.assign(result.online, {
+        final_url: intermediate.url,
+        chain: [
+          { url: unrecognizedURL, method: "HEAD", status: 302 },
+          { url: intermediate.url, method: "GET", status: 200 },
+        ],
+      });
+      result.prediction_target = "destination";
+      return route.fulfill({ json: result });
+    });
+
+    await scan(page, unrecognizedURL, "Prediksi tidak tersedia — Pengalihan tidak dapat dibaca dari header HTTP");
+    const redirect = page.locator("#redirect-result");
+    await expect(redirect.getByRole("row", { name: /URL publik terakhir \(tujuan akhir belum dikonfirmasi\)/ }))
+      .toContainText(intermediate.url);
+    await expect(redirect.getByRole("row", { name: /URL Tujuan URL tujuan tidak tersedia/ })).toBeVisible();
+    await expect(redirect.getByRole("row", { name: /Prediksi URL Tujuan Tidak Tersedia/ })).toBeVisible();
+    await expect(redirect).toContainText("Pengalihan berhenti di layanan pemendek. URL tujuan akhir belum terkonfirmasi.");
+    expect(await scanHistory(page)).toMatchObject([{
+      url: "https://short.example/…", final_url: null, prediction: null, prediction_source: null,
+    }]);
+  });
+}
+
+for (const [caseName, inconsistentProof] of [
+  ["no explicit confirmation", { destination_confirmed: undefined }],
+  ["HTTP 403", { http_status: 403 }],
+  ["no redirect recorded", { redirect_count: 0 }],
+  ["a mismatched final URL", { final_url: "https://different.example/" }],
+]) {
+  test(`withholds a destination prediction with ${caseName}`, async ({ page }) => {
+    await page.route("**/api/scan", (route) => {
+      const result = initialResult(origin, shortURL, network("not_requested", null));
+      confirmedDestination(result);
+      Object.assign(result.online, inconsistentProof);
+      result.prediction_target = "destination";
+      return route.fulfill({ json: result });
+    });
+
+    await scan(page, shortURL, "Prediksi tidak tersedia — Pengalihan tidak dapat dibaca dari header HTTP");
+    await expect(page.getByRole("row", { name: /Prediksi URL Tujuan Tidak Tersedia/ })).toBeVisible();
+    await expect(page.locator("#redirect-result")).toContainText("URL tujuan akhir belum terkonfirmasi.");
+    await expectPendingHistory(page);
+  });
+}
+
 test("keeps initial lexical features through a blocked destination and timeout", async ({ page }) => {
   let redirects = 0;
   await page.route("**/api/scan", (route) => {
@@ -327,7 +380,7 @@ test("distinguishes a resolution HTTP error from a confirmed destination without
   expect(await scanHistory(page)).toMatchObject([{ prediction: null, final_url: "https://example.com/…" }]);
 });
 
-test("uses only the qualified 7-feature model after a documented resolution failure", async ({ page, context }) => {
+test("withholds the prediction on failure even when the browser has a qualified 7-feature model", async ({ page, context }) => {
   const model = {
     version: "fixture-browser-E2",
     fallback: {
@@ -364,13 +417,9 @@ test("uses only the qualified 7-feature model after a documented resolution fail
     return route.fulfill({ json: value });
   });
 
-  await scan(page, shortURL, "Prediksi Aman (benign)");
-  await expect(page.getByText(/Prediksi berdasarkan URL awal\. URL tujuan belum dapat dikonfirmasi/)).toBeVisible();
-  await expect(page.getByText("Random Forest E1 · 7 fitur")).toBeVisible();
-  expect(await scanHistory(page)).toMatchObject([{
-    prediction: "benign", probability: 0.23, prediction_source: "initial",
-    model_version: "fixture-browser-E1", final_url: null,
-  }]);
+  await scan(page, shortURL, "Prediksi tidak tersedia — Resolusi DNS gagal");
+  await expect(page.getByText("Random Forest E1 · 7 fitur")).toHaveCount(0);
+  await expectPendingHistory(page);
   await page.getByRole("button", { name: "Coba Resolusi Ulang" }).click();
   await expect(page.getByRole("heading", { name: "Prediksi Phishing", exact: true })).toBeVisible();
   expect(await scanHistory(page)).toMatchObject([{
