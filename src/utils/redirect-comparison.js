@@ -63,7 +63,10 @@ function keysOutsideTest(checkpoint) {
   for (const name of ["train", "validation"]) {
     for (const i of checkpoint.split[name]) {
       const row = checkpoint.prepared.rows[i];
-      for (const key of KEY_FIELDS) used[key].add(row[key]);
+      for (const source of [row, row.destinationKeys, ...(row.destinationAlternates ?? [])]) {
+        if (source)
+          for (const key of KEY_FIELDS) used[key].add(source[key]);
+      }
     }
   }
   return used;

@@ -16,15 +16,17 @@ url,label
 https://example.org/,1
 ```
 
-Contoh tersebut menunjukkan format CSV. Penelitian memerlukan kedua label pada setiap split, dengan sedikitnya tiga kelompok domain berbeda yang memuat masing-masing label. Kolom tambahan diabaikan. Pratinjau menampilkan maksimal 20 record dan menyamarkan URL. Distribusi, hasil evaluasi, dan status berasal dari data yang diproses.
+Contoh tersebut menunjukkan format CSV. Penelitian memerlukan kedua label pada setiap split, dengan sedikitnya tiga kelompok domain berbeda yang memuat masing-masing label. Pratinjau menampilkan maksimal 20 record dan menyamarkan URL. Distribusi, hasil evaluasi, dan status berasal dari data yang diproses.
 
 Dataset, model, dan hasil riset tidak disertakan. Label historis dan keluaran model tidak menjamin keamanan URL.
 
 ## Perbandingan URL pendek
 
-Di **Pemindai URL**, gunakan **Pindai URL** untuk menghitung fitur URL yang dimasukkan. Untuk URL biasa, model langsung menilai URL itu. Untuk tautan bertoken dari layanan pemendek yang dikenal, klik **Periksa Tujuan Redirect**. Prediksi benign atau phishing dihitung hanya dari URL tujuan akhir yang terkonfirmasi. Aktifkan `ONLINE_SCAN_ENABLED=1` pada server untuk mengizinkan pemeriksaan. Pemindai mencoba HEAD lebih dulu. Bila perlu, pemindai dapat mencoba satu GET pada tautan pemendek yang dikenali dan menutup koneksi setelah membaca header. Status dan metode setiap tahap ditampilkan bersama rantai pengalihan.
+Di **Pemindai URL**, gunakan **Pindai URL** untuk menghitung fitur URL yang dimasukkan. **Periksa Tujuan Redirect** menelusuri URL publik HTTP(S) lewat server, termasuk penyedia yang belum masuk katalog. Aktifkan `ONLINE_SCAN_ENABLED=1` untuk mengizinkan pemeriksaan. Pemindai mencoba HEAD lebih dulu dan dapat mencoba satu GET terbatas ketika respons HEAD tidak cukup. Status 401, 403, dan 429 dilaporkan sebagai akses diblokir. Aplikasi menampilkan status dan metode setiap tahap bersama rantai pengalihan.
 
-Pemindai menampilkan fitur awal dan tujuan berdampingan. Penanda **Dasar** menunjukkan tujuh fitur yang juga termasuk dalam 19 fitur lengkap. Skor model belum dikalibrasi. Jika lokasi publik sudah teramati tetapi respons tujuan belum dapat dikonfirmasi, pemindai menampilkan lokasi itu secara terpisah dan menandai prediksi serta fitur tujuan sebagai N/A. Pemeriksaan hanya mengikuti pengalihan HTTP. Tujuan dapat berbeda pada waktu lain atau untuk klien lain. Riwayat mencatat dasar prediksi dan menyamarkan asal URL.
+Pemindai menampilkan fitur awal dan tujuan berdampingan. Penanda **Dasar** menunjukkan tujuh fitur yang juga termasuk dalam 19 fitur lengkap. Jika HTTP redirect berakhir pada respons sukses, model E2 menilai fitur URL tujuan. URL biasa yang selesai diperiksa tanpa pengalihan dinilai dari URL awal. Lokasi publik yang teramati sebelum kegagalan dilaporkan terpisah sebagai lokasi terakhir yang diketahui. Skor model belum dikalibrasi. Pengamatan ini berlaku pada waktu pemindaian dan dapat berbeda untuk klien lain.
+
+Jika pemeriksaan tautan pendek yang dikenali gagal, fitur URL awal tetap tampil. Cadangan E1 **7 fitur dari URL awal** hanya aktif untuk eksperimen browser yang memiliki kedua label pada cohort kegagalan redirect terdokumentasi di pelatihan, validasi, dan pengujian. Hasil validasi dan uji cohort disimpan dalam laporan lengkap. Cadangan memakai label asal dan fitur URL awal, dengan keterangannya sendiri. Pada model lama atau CSV tanpa bukti kegagalan yang cukup, prediksi cadangan tidak tersedia. Riwayat mencatat dasar prediksi yang dipakai dan menyamarkan asal URL.
 
 ### Cakupan URL pendek dalam dataset
 
@@ -33,6 +35,8 @@ Setelah data dibagi, **Cakupan URL Pendek per Partisi** menunjukkan jumlah benig
 Di **Evaluasi Model**, **Positif Palsu pada URL Pendek** menunjukkan berapa URL pendek benign yang diprediksi phishing dari seluruh URL pendek benign pada data uji. Jika penyebutnya nol, tingkat positif palsu tampil sebagai N/A. Gunakan jumlah dan cakupan kelompok ketika menafsirkan hasil dengan sampel kecil.
 
 ### Analisis bukti historis
+
+Impor utama tetap memakai satu CSV `url,label`. Kolom opsional `final_url`, `resolution_status`, `source` (sitasi atau ID arsip), dan `observed_at` (tanggal ISO) dapat mencatat bukti historis. Arahan tujuan yang valid secara leksikal menggabungkan kelompok URL dan domain terkait sebelum split. Aplikasi menyimpan status dan provenance dalam laporan, menggunakan label asli, dan menghitung fitur model dari URL awal dataset. Kegagalan historis seperti `TIMEOUT` dipakai hanya untuk memeriksa kelayakan cadangan E1. Tidak ada permintaan ke situs tujuan saat impor. Kegagalan resolusi online saat ini tidak mengubah bukti historis.
 
 Setelah penelitian E1–E6 selesai, buka **Evaluasi Model**. Analisis pasangan merupakan langkah opsional. Unduh **Pembagian Dataset** untuk mendapatkan nomor record dan pilih tautan pendek dari partisi `test`. Buat satu CSV bukti dengan kolom berikut. Baris ini hanya contoh format.
 
@@ -93,7 +97,8 @@ Laporan lama dalam format `research-summary.json` masih dapat diimpor secara ops
 | `GET /api/health` | — | API readiness and deployed-model status |
 | `POST /api/features` | JSON `{ "url": "https://example.com" }` | Ordered features, definitions, types, similarity |
 | `POST /api/predict` | URL JSON | Lexical features and deployed prediction, or explicit unavailable state |
-| `POST /api/scan` | JSON dengan `url` dan `check_redirect` opsional | Fitur URL awal. Prediksi URL biasa berada di level atas. Untuk tautan pendek, prediksi berada di `destination` ketika tujuan terkonfirmasi. |
+| `POST /api/scan` | JSON dengan `url` dan `check_redirect` opsional | Fitur awal, status resolusi, dan prediksi yang merujuk URL awal atau tujuan terkonfirmasi melalui `prediction_target`. |
+| `POST /api/resolve-url` | JSON dengan `url` | Resolver mandiri dengan URL dan domain awal/akhir, status, kode kegagalan, rantai, metode, dan waktu. `final_url` dipakai untuk tujuan redirect yang terkonfirmasi. |
 | `POST /api/research/features` | JSON daftar URL terbatas | Fitur leksikal dan kunci pengelompokan dalam urutan input |
 | `POST /api/research/train/{E1…E6}` | Byte matriks, label, split, dan indikator | Satu hasil eksperimen. E2 menyertakan forest numerik. |
 | `POST /api/dataset/analyze` | Multipart field `file` | Validated counts, hash, masked preview |
@@ -103,7 +108,7 @@ Laporan lama dalam format `research-summary.json` masih dapat diimpor secara ops
 
 ## Network and privacy safeguards
 
-Input permits HTTP(S) only. Credentials, whitespace, control characters, and backslashes are rejected. Hostnames use IDNA normalization. The scanner permits only each scheme's default port, validates **every** DNS answer, rejects non-public IPs and internal names, and connects to a validated numeric IP. HTTPS uses the original hostname for SNI and certificate verification. Every redirect repeats these checks. Mixed public/private DNS answers reject the target. At most five redirects, 32 KiB headers per response, five seconds per request, and twelve seconds total are allowed. A GET retry is limited to one known token-bearing shortener per check. The scanner reads only headers and closes the connection without reading response bodies. Redirects implemented in HTML or JavaScript are outside the HTTP header check. Direct connections preserve IP pinning and depend on destination reachability from the deployment.
+Input permits HTTP(S) only. Credentials, whitespace, control characters, and backslashes are rejected. Hostnames use IDNA normalization. The scanner permits only each scheme's default port, validates **every** DNS answer, rejects non-public IPs and internal names, and connects to a validated numeric IP. HTTPS uses the original hostname for SNI and certificate verification. Every redirect repeats these checks. Mixed public/private DNS answers reject the target. The scanner allows up to ten redirects, 32 KiB of headers per response, one GET fallback, five seconds per request, and eighteen seconds total. It closes the connection at the end of the headers. HTML or JavaScript navigation, interstitials, and interactive protections are outside the HTTP header check. Direct connections preserve IP pinning and depend on destination reachability from the deployment.
 
 Request bodies and CSV rows are bounded. Rate limits per client and process are 100 feature-batch requests, 12 browser-training requests, and 30 other requests per minute. Each process handles one training request at a time. Forwarded headers are not trusted directly. For a public deployment, review Vercel Firewall and access rules for the intended audience. The provider enforces the function deadline.
 

@@ -43,6 +43,33 @@ test("automatic intake fails clearly for malformed quotes or repeated required h
   await assert.rejects(readAutomaticCSV(csv("url,url,label\nx,x,0")), /satu kolom url dan label/u);
 });
 
+test("intake preserves optional destination evidence and only flags documented resolution failures", async () => {
+  const intake = await readAutomaticCSV(csv([
+    "URL,label,final_url,resolution_status,observed_at,source,final_domain",
+    'https://t.ly/archived,1,https://destination.example/synthetic,RESOLVED,2026-02-20,"Archive, 4",ignored.example',
+    "https://bit.ly/dead,1,,access-blocked,2026-02-20T08:30:00+09:00,Snapshot 5,",
+    "https://is.gd/invalid,0,,unavailable,2026-02-30,,",
+    "https://example.test/,0,,NO_REDIRECT,2026-02-20,,",
+  ].join("\n")));
+  assert.deepEqual(intake.rows.map(({ label, documentedDestination, resolutionStatus, resolutionFailed, observedAt, evidenceSource }) => ({
+    label, documentedDestination, resolutionStatus, resolutionFailed, observedAt, evidenceSource,
+  })), [
+    {
+      label: 1, documentedDestination: "https://destination.example/synthetic", resolutionStatus: "RESOLVED",
+      resolutionFailed: false, observedAt: "2026-02-20", evidenceSource: "Archive, 4",
+    },
+    {
+      label: 1, documentedDestination: null, resolutionStatus: "ACCESS_BLOCKED",
+      resolutionFailed: true, observedAt: "2026-02-20T08:30:00+09:00", evidenceSource: "Snapshot 5",
+    },
+    { label: 0, documentedDestination: null, resolutionStatus: null, resolutionFailed: false, observedAt: null, evidenceSource: null },
+    {
+      label: 0, documentedDestination: null, resolutionStatus: "NO_REDIRECT",
+      resolutionFailed: false, observedAt: "2026-02-20", evidenceSource: null,
+    },
+  ]);
+});
+
 test("50,000 synthetic source records over 2 MiB stream without reading the entire file", async () => {
   const lines = Array.from({ length: 50_000 }, (_, i) =>
     `https://site-${i}.example/Case?source=synthetic-fixture,${i % 2}\n`);
@@ -121,6 +148,49 @@ test("seeded domain split is reproducible and retains transitive groups", () => 
     assert.ok(split.summary[name].benign > 0 && split.summary[name].phishing > 0);
     assert.ok(split.summary[name].shorteners > 0);
   }
+});
+
+test("documented destinations link aliases and ordinary URL domains across duplicate evidence", () => {
+  const rows = [
+    {
+      row: 2, url: "https://bit.ly/alias", label: 0, documentedDestination: "https://one.test/destination",
+      evidenceSource: "Archive 1", observedAt: "2025-11-11",
+    },
+    {
+      row: 3, url: "https://bit.ly/alias", label: 0, documentedDestination: "https://two.test/destination",
+      evidenceSource: "Archive 2", observedAt: "2026-01-02",
+    },
+    { row: 4, url: "https://one.test/ordinary", label: 1 },
+    { row: 5, url: "https://two.test/destination", label: 0 },
+    { row: 6, url: "https://is.gd/alias", label: 1, documentedDestination: "https://one.test/another" },
+    { row: 7, url: "https://t.ly/dead", label: 1, documentedDestination: "ftp://invalid.example/" },
+    ...Array.from({ length: 40 }, (_, i) => ({
+      row: i + 8, url: `https://example-${i}.test/`, label: i % 2,
+    })),
+  ];
+  const extracted = rows.map(({ url }) => extraction(url, new URL(url).hostname));
+  const targets = new Map([
+    [2, extraction(rows[0].documentedDestination, "one.test")],
+    [3, extraction(rows[1].documentedDestination, "two.test")],
+    [6, extraction(rows[4].documentedDestination, "one.test")],
+    [7, null],
+  ]);
+  const prepared = prepareAutomaticData(rows, extracted, targets);
+  assert.deepEqual(prepared.summary.destinationEvidence, { documented: 2, withProvenance: 1, invalid: 1 });
+  assert.equal(prepared.rows[0].destinationKeys.domain, "one.test");
+  assert.deepEqual(prepared.rows[0].destinationAlternates.map(({ domain }) => domain), ["two.test"]);
+  assert.deepEqual(prepared.rows[0].destinationMetadata, [
+    { row: 2, source: "Archive 1", observed_at: "2025-11-11" },
+    { row: 3, source: "Archive 2", observed_at: "2026-01-02" },
+  ]);
+  assert.equal(prepared.rows.find(({ row }) => row === 7).label, 1);
+  const aliases = prepared.rows.flatMap(({ row }, i) => [2, 4, 5, 6].includes(row) ? [i] : []);
+  assert.ok(prepared.groups.some((group) => aliases.every((i) => group.includes(i))));
+  const split = splitAutomaticData(prepared);
+  assert.ok([split.train, split.validation, split.test].some((part) => aliases.every((i) => part.includes(i))));
+  assert.equal(split.summary.audit.passed, true);
+  assert.match(split.summary.warnings.join("\n"), /final_url opsional tidak valid/u);
+  assert.match(split.summary.warnings.join("\n"), /tanggal observasi/u);
 });
 
 test("oversized provider prefixes stay together with a split imbalance warning", () => {

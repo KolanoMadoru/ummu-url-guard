@@ -18,6 +18,9 @@ MAX_BROWSER_TRAINING_ROWS = 50_000
 MAX_BROWSER_TRAINING_BYTES = MAX_BROWSER_TRAINING_ROWS * BYTES_PER_ROW
 WEB_FOREST_MAX_LEAVES = 64
 CURVE_MAX_POINTS = 512
+SHORT_LINK = 1
+BRAND_SIMILARITY = 2
+DOCUMENTED_FAILED_RESOLUTION = 4
 CONFIGURATION_BY_ID = {
     configuration_id: (model_name, feature_set)
     for configuration_id, model_name, feature_set in CONFIGURATIONS
@@ -37,8 +40,10 @@ def _decode_batch(body):
     ).reshape(3, rows)
     if not np.isfinite(matrix).all() or matrix.min() < 0 or matrix.max() > MAX_RESEARCH_URL_LENGTH:
         raise ValueError("Batch fitur berisi nilai numerik di luar batas fitur leksikal.")
-    if labels.max() > 1 or splits.max() > 2 or scenarios.max() > 3:
+    if labels.max() > 1 or splits.max() > 2 or scenarios.max() > 7:
         raise ValueError("Label, partisi, atau penanda skenario tidak valid.")
+    if np.any(((scenarios & DOCUMENTED_FAILED_RESOLUTION) != 0) & ((scenarios & SHORT_LINK) == 0)):
+        raise ValueError("Kegagalan resolusi hanya berlaku pada penanda skenario URL pendek.")
 
     partitions = tuple(np.flatnonzero(splits == code) for code in (0, 1, 2))
     if any(len(np.unique(labels[indices])) != 2 for indices in partitions):
@@ -59,7 +64,7 @@ def _display_metrics(actual, predicted, scores):
     return result
 
 
-def _portable_forest(model):
+def _portable_forest(model, names):
     trees = []
     for estimator in model.estimators_:
         tree = estimator.tree_
@@ -79,7 +84,7 @@ def _portable_forest(model):
     return {
         "schema": "ummu-random-forest-v1",
         "schema_version": SCHEMA_VERSION,
-        "feature_names": list(FEATURE_NAMES),
+        "feature_names": list(names),
         "classes": [0, 1],
         "trees": trees,
     }
@@ -104,8 +109,8 @@ def train_browser_experiment(configuration_id: str, body: bytes) -> dict:
     val_predictions, val_scores, validation_seconds = _prediction(model, features[validation])
     predictions, scores, prediction_seconds = _prediction(model, features[test])
     actual, scenario = labels[test], flags[test]
-    is_shortened = (scenario & 1) != 0
-    masks = {"biasa": ~is_shortened, "pendek": is_shortened, "merek": (scenario & 2) != 0}
+    is_shortened = (scenario & SHORT_LINK) != 0
+    masks = {"biasa": ~is_shortened, "pendek": is_shortened, "merek": (scenario & BRAND_SIMILARITY) != 0}
     result = {
         "configuration_id": configuration_id,
         "model_name": model_name,
@@ -141,5 +146,22 @@ def train_browser_experiment(configuration_id: str, body: bytes) -> dict:
         ),
     }
     if configuration_id == "E2":
-        result["model"] = _portable_forest(model)
+        result["model"] = _portable_forest(model, names)
+    if configuration_id == "E1":
+        failed = (flags & DOCUMENTED_FAILED_RESOLUTION) != 0
+        failed_train, failed_validation, failed_test = (failed[split] for split in (train, validation, test))
+        # Require evidence from both classes in each partition. Use the existing
+        # E1 predictions so the failure subset never changes model fitting.
+        if all(len(np.unique(labels[split][mask])) == 2 for split, mask in (
+            (train, failed_train), (validation, failed_validation), (test, failed_test)
+        )):
+            result["fallback"] = {
+                "basis": "url_awal",
+                "training_rows": int(failed_train.sum()),
+                "validation": _display_metrics(
+                    labels[validation][failed_validation], val_predictions[failed_validation], val_scores[failed_validation]
+                ),
+                "testing": _display_metrics(actual[failed_test], predictions[failed_test], scores[failed_test]),
+            }
+            result["model"] = _portable_forest(model, names)
     return result

@@ -1,8 +1,18 @@
-export function predictBrowserForest(model, featureResult) {
+const BASIC_FEATURE_NAMES = [
+  "url_length", "domain_length", "digit_count", "dot_count",
+  "hyphen_count", "special_count", "subdomain_count",
+];
+
+export function predictBrowserForest(model, featureResult, { basic = false } = {}) {
   if (model?.schema !== "ummu-random-forest-v1" ||
-      model.schema_version !== featureResult.schema_version ||
-      model.feature_names?.length !== 19 || !model.trees?.length) return null;
-  const features = model.feature_names.map((name) => Math.fround(featureResult.features[name]));
+      model.schema_version !== featureResult?.schema_version ||
+      !Array.isArray(model.feature_names) ||
+      model.feature_names.length !== (basic ? BASIC_FEATURE_NAMES.length : 19) ||
+      (basic && !BASIC_FEATURE_NAMES.every((name, index) => model.feature_names[index] === name)) ||
+      !Array.isArray(model.trees) || !model.trees.length) return null;
+  const values = model.feature_names.map((name) => featureResult.features?.[name]);
+  if (!values.every(Number.isFinite)) return null;
+  const features = values.map(Math.fround);
   if (!features.every(Number.isFinite)) return null;
   let sum = 0;
   for (const tree of model.trees) {
