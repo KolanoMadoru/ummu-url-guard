@@ -39,7 +39,7 @@ function initialResult(features, url, online) {
   };
 }
 
-async function scan(page, url, expected = "Prediksi menunggu URL tujuan") {
+async function scan(page, url, expected) {
   await page.goto("/#scanner");
   await page.getByLabel("Masukkan URL").fill(url);
   await page.getByRole("button", { name: "Pindai URL", exact: true }).click();
@@ -81,30 +81,24 @@ function confirmedDestination(value) {
   });
 }
 
-test("predicts from the confirmed destination only and compares both lexical representations", async ({ page }) => {
+test("automatically predicts from the confirmed destination in one scan request", async ({ page }) => {
   const calls = [];
   await page.route("**/api/scan", (route) => {
     const body = route.request().postDataJSON();
     calls.push(body);
     const value = initialResult(origin, shortURL, network("not_requested", null));
-    if (body.check_redirect) confirmedDestination(value);
+    confirmedDestination(value);
     return route.fulfill({ json: value });
   });
 
-  await scan(page, shortURL);
-  expect(calls).toEqual([{ url: shortURL }]);
-  await expectPendingHistory(page);
+  await scan(page, shortURL, "Prediksi Phishing");
+  expect(calls).toEqual([{ url: shortURL, check_redirect: true }]);
   const redirect = page.locator("#redirect-result");
-  await expect(redirect).toContainText("URL tujuan tidak tersedia");
   const features = page.locator("#scan-features");
   await expect(features.locator("tbody tr")).toHaveCount(19);
   await expect(features.getByRole("cell", { name: "Dasar + lengkap", exact: true })).toHaveCount(7);
   const lengths = features.getByRole("row", { name: /^Panjang URL/ }).getByRole("cell");
   await expect(lengths.nth(2)).toHaveText(String(shortURL.length));
-  await expect(lengths.nth(3)).toHaveText("N/A (tidak tersedia)");
-
-  await page.getByRole("button", { name: "Periksa Tujuan Redirect" }).click();
-  await expect(page.getByRole("heading", { name: "Prediksi Phishing", exact: true })).toBeVisible();
   await expect(redirect).toContainText(destinationURL);
   await expect(redirect.getByRole("row", { name: /Prediksi URL Tujuan/ })).toContainText("Phishing");
   await expect(redirect).toContainText("destination-fixture-model");
@@ -114,8 +108,6 @@ test("predicts from the confirmed destination only and compares both lexical rep
   await expect(page.getByRole("row", { name: /GET 302/ })).toContainText(shortURL);
   await expect(page.getByRole("row", { name: /HEAD 200/ })).toContainText(destinationURL);
   await expect(page.locator("#scan-result a")).toHaveCount(0);
-  expect(calls).toEqual([{ url: shortURL }, { url: shortURL, check_redirect: true }]);
-
   const history = await scanHistory(page);
   expect(history).toHaveLength(1);
   expect(history[0]).toMatchObject({
@@ -135,29 +127,25 @@ test("predicts from the confirmed destination only and compares both lexical rep
 
 test("shows an observed public URL separately when the final destination cannot be confirmed", async ({ page }) => {
   await page.route("**/api/scan", (route) => {
-    const { check_redirect } = route.request().postDataJSON();
+    expect(route.request().postDataJSON()).toEqual({ url: shortURL, check_redirect: true });
     const value = initialResult(origin, shortURL, network("not_requested", null));
-    if (check_redirect) {
-      confirmedDestination(value);
-      value.online = network("unavailable", "HTTP request timed out.", {
-        resolution_status: "TIMEOUT",
-        destination_confirmed: false,
-        last_observed_url: destinationURL,
-        redirect_count: 1,
-        chain: [{ url: shortURL, status: 302 }],
-      });
-    }
+    confirmedDestination(value);
+    value.online = network("unavailable", "HTTP request timed out.", {
+      resolution_status: "TIMEOUT",
+      destination_confirmed: false,
+      last_observed_url: destinationURL,
+      redirect_count: 1,
+      chain: [{ url: shortURL, status: 302 }],
+    });
     return route.fulfill({ json: value });
   });
 
-  await scan(page, shortURL);
-  await page.getByRole("button", { name: "Periksa Tujuan Redirect" }).click();
+  await scan(page, shortURL, "Prediksi tidak tersedia — Batas waktu habis");
   const redirect = page.locator("#redirect-result");
   await expect(redirect.getByRole("row", { name: /URL publik terakhir \(tujuan akhir belum dikonfirmasi\)/ }))
     .toContainText(destinationURL);
   await expect(redirect.getByRole("row", { name: /Prediksi URL Tujuan/ })).toContainText("Tidak Tersedia");
   await expect(redirect).toContainText("URL tujuan tidak tersedia");
-  await expect(page.getByRole("heading", { name: "Prediksi tidak tersedia — URL tujuan belum terkonfirmasi", exact: true })).toBeVisible();
   await expect(page.getByRole("row", { name: /HEAD 302/ })).toContainText(shortURL);
   const lengths = page.locator("#scan-features").getByRole("row", { name: /^Panjang URL/ }).getByRole("cell");
   await expect(lengths.nth(3)).toHaveText("N/A (tidak tersedia)");
@@ -168,22 +156,20 @@ test("shows an observed public URL separately when the final destination cannot 
 test("keeps initial lexical features through a blocked destination and timeout", async ({ page }) => {
   let redirects = 0;
   await page.route("**/api/scan", (route) => {
-    const body = route.request().postDataJSON();
-    if (!body.check_redirect) {
-      return route.fulfill({ json: initialResult(origin, shortURL, network("not_requested", null)) });
-    }
+    expect(route.request().postDataJSON()).toEqual({ url: shortURL, check_redirect: true });
     if (++redirects === 2) {
       return route.fulfill({ status: 504, json: { detail: "Synthetic gateway timeout" } });
     }
     return route.fulfill({
-      json: initialResult(origin, shortURL, network("unavailable", "A DNS address is not a public unicast IP; target blocked.")),
+      json: initialResult(origin, shortURL, network("unavailable", "A DNS address is not a public unicast IP; target blocked.", {
+        resolution_status: "UNSAFE_DESTINATION", destination_confirmed: false,
+      })),
     });
   });
 
-  await scan(page, shortURL);
+  await scan(page, shortURL, "Prediksi tidak tersedia — Tujuan tidak diizinkan");
   const button = page.getByRole("button", { name: "Periksa Tujuan Redirect" });
   const redirect = page.locator("#redirect-result");
-  await button.click();
   await expect(redirect).toContainText("tujuan diblokir");
   await expectPendingHistory(page);
   await button.click();
@@ -193,14 +179,16 @@ test("keeps initial lexical features through a blocked destination and timeout",
   await expect(page.locator("#scan-features").getByRole("row", { name: /^Panjang URL/ }).getByRole("cell").nth(2))
     .toHaveText(String(shortURL.length));
   await expectPendingHistory(page);
-  await expect(page.getByRole("heading", { name: "Prediksi tidak tersedia — URL tujuan belum terkonfirmasi", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Prediksi tidak tersedia — Batas waktu habis", exact: true })).toBeVisible();
+  expect(redirects).toBe(2);
 });
 
 test("labels a shortener homepage and keeps lexical analysis available when redirect checks are disabled", async ({ page }) => {
   const calls = [];
   await page.route("**/api/scan", (route) => {
-    const { url } = route.request().postDataJSON();
-    calls.push(url);
+    const body = route.request().postDataJSON();
+    const { url } = body;
+    calls.push(body);
     const online = network("disabled", "Online checking is disabled by environment configuration.");
     return route.fulfill({ json: initialResult(url === shortURL ? origin : homepage, url, online) });
   });
@@ -211,11 +199,11 @@ test("labels a shortener homepage and keeps lexical analysis available when redi
   await page.getByLabel("Masukkan URL").fill(shortURL);
   await page.getByRole("button", { name: "Pindai URL", exact: true }).click();
   await expect(page.getByRole("button", { name: "Periksa Tujuan Redirect" })).toBeDisabled();
-  await expect(page.locator("#redirect-result")).toContainText("Pemeriksaan jaringan dinonaktifkan oleh konfigurasi lingkungan.");
+  await expect(page.locator("#redirect-result")).toContainText("Aktifkan ONLINE_SCAN_ENABLED=1 pada Vercel");
   await expect(page.locator("#scan-features")).toContainText("Panjang URL");
   await expectPendingHistory(page);
-  await expect(page.getByRole("heading", { name: "Prediksi tidak tersedia — URL tujuan belum terkonfirmasi", exact: true })).toBeVisible();
-  expect(calls).toEqual(["https://bit.ly/", shortURL]);
+  await expect(page.getByRole("heading", { name: "Pemeriksaan redirect dinonaktifkan oleh konfigurasi server", exact: true })).toBeVisible();
+  expect(calls).toEqual([{ url: "https://bit.ly/", check_redirect: true }, { url: shortURL, check_redirect: true }]);
 });
 
 test("runs the active browser model on the destination's features after confirmation", async ({ page, context }) => {
@@ -240,15 +228,13 @@ test("runs the active browser model on the destination's features after confirma
     };`,
   }));
   await page.route("**/api/scan", (route) => {
+    expect(route.request().postDataJSON()).toEqual({ url: shortURL, check_redirect: true });
     const value = initialResult(origin, shortURL, network("not_requested", null));
-    if (route.request().postDataJSON().check_redirect) confirmedDestination(value);
+    confirmedDestination(value);
     return route.fulfill({ json: value });
   });
 
-  await scan(page, shortURL);
-  await expectPendingHistory(page);
-  await page.getByRole("button", { name: "Periksa Tujuan Redirect" }).click();
-  await expect(page.getByRole("heading", { name: "Prediksi Aman (benign)", exact: true })).toBeVisible();
+  await scan(page, shortURL, "Prediksi Aman (benign)");
   const redirect = page.locator("#redirect-result");
   await expect(redirect.getByRole("row", { name: /Prediksi URL Tujuan/ })).toContainText("Aman (benign)");
   await expect(redirect).toContainText(model.version);
@@ -278,32 +264,67 @@ test("resolves a provider outside the lexical list and predicts using the confir
     return route.fulfill({ json: value });
   });
 
-  await scan(page, unrecognizedURL, "Prediksi Aman (benign)");
-  await page.getByRole("button", { name: "Periksa Tujuan Redirect" }).click();
-  await expect(page.getByRole("heading", { name: "Prediksi Phishing", exact: true })).toBeVisible();
+  await scan(page, unrecognizedURL, "Prediksi Phishing");
   await expect(page.getByRole("row", { name: /Domain tujuan example.com/ })).toBeVisible();
   await expect(page.getByRole("row", { name: /HEAD 307/ })).toContainText(unrecognizedURL);
   expect(await scanHistory(page)).toMatchObject([{ prediction: "phishing", prediction_source: "destination" }]);
-  expect(calls).toEqual([{ url: unrecognizedURL }, { url: unrecognizedURL, check_redirect: true }]);
+  expect(calls).toEqual([{ url: unrecognizedURL, check_redirect: true }]);
 });
 
-test("keeps ordinary URL prediction when a lookup finds no HTTP redirect", async ({ page }) => {
+test("uses the initial URL when a retry completes without an HTTP redirect", async ({ page }) => {
+  let checks = 0;
   await page.route("**/api/scan", (route) => {
-    const { check_redirect } = route.request().postDataJSON();
-    const state = check_redirect ? "NO_REDIRECT" : "NOT_REQUESTED";
+    expect(route.request().postDataJSON()).toEqual({ url: unrecognizedURL, check_redirect: true });
+    if (++checks === 1) {
+      const value = initialResult(unrecognized, unrecognizedURL, network("unavailable", "DNS resolution failed.", {
+        resolution_status: "DNS_ERROR", destination_confirmed: false,
+      }));
+      Object.assign(value, { prediction_target: null, available: false, prediction: null, probability: null, model_version: null });
+      return route.fulfill({ json: value });
+    }
     const value = initialResult(unrecognized, unrecognizedURL, network("complete", null, {
-      resolution_status: state, destination_confirmed: false, is_redirected: false,
-      last_observed_url: check_redirect ? unrecognizedURL : null,
+      resolution_status: "NO_REDIRECT", destination_confirmed: false, is_redirected: false,
+      last_observed_url: unrecognizedURL,
     }));
+    value.id = "fixture-redirect-retry";
     value.prediction_target = "initial";
     return route.fulfill({ json: value });
   });
-  await scan(page, unrecognizedURL, "Prediksi Aman (benign)");
-  await page.getByRole("button", { name: "Periksa Tujuan Redirect" }).click();
+  await scan(page, unrecognizedURL, "Prediksi tidak tersedia — Resolusi DNS gagal");
+  await page.getByRole("button", { name: "Coba Resolusi Ulang" }).click();
   await expect(page.getByRole("row", { name: /Status pemeriksaan Tidak ditemukan redirect HTTP/ })).toBeVisible();
   await expect(page.getByRole("row", { name: /URL publik terakhir/ })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Prediksi Aman (benign)", exact: true })).toBeVisible();
-  expect(await scanHistory(page)).toMatchObject([{ prediction: "benign", prediction_source: "initial", final_url: null }]);
+  expect(await scanHistory(page)).toMatchObject([{
+    id: "fixture-redirect", prediction: "benign", prediction_source: "initial", final_url: null,
+  }]);
+  expect(checks).toBe(2);
+});
+
+test("distinguishes a resolution HTTP error from a confirmed destination without a trained model", async ({ page }) => {
+  let checks = 0;
+  await page.route("**/api/scan", (route) => {
+    expect(route.request().postDataJSON()).toEqual({ url: shortURL, check_redirect: true });
+    const result = initialResult(origin, shortURL, network("unavailable", "Server returned HTTP 404.", {
+      resolution_status: "HTTP_ERROR", http_status: 404, destination_confirmed: false,
+    }));
+    result.prediction_target = null;
+    if (++checks === 2) {
+      confirmedDestination(result);
+      Object.assign(result.destination, { available: false, prediction: null, probability: null, model_version: null });
+      result.prediction_target = "destination";
+    }
+    return route.fulfill({ json: result });
+  });
+
+  await scan(page, shortURL, "Prediksi tidak tersedia — Server tujuan mengembalikan galat HTTP");
+  await expect(page.getByRole("row", { name: "Status HTTP terakhir 404" })).toBeVisible();
+  await expectPendingHistory(page);
+  await page.getByRole("button", { name: "Periksa Tujuan Redirect" }).click();
+  await expect(page.getByRole("heading", { name: "Prediksi Tidak Tersedia — model belum dilatih" })).toBeVisible();
+  await expect(page.getByRole("row", { name: "Status pemeriksaan Tujuan terkonfirmasi" })).toBeVisible();
+  await expect(page.locator("#redirect-result")).toContainText(destinationURL);
+  expect(await scanHistory(page)).toMatchObject([{ prediction: null, final_url: "https://example.com/…" }]);
 });
 
 test("uses only the qualified 7-feature model after a documented resolution failure", async ({ page, context }) => {
@@ -343,10 +364,7 @@ test("uses only the qualified 7-feature model after a documented resolution fail
     return route.fulfill({ json: value });
   });
 
-  await scan(page, shortURL);
-  await expectPendingHistory(page);
-  await page.getByRole("button", { name: "Periksa Tujuan Redirect" }).click();
-  await expect(page.getByRole("heading", { name: "Prediksi Aman (benign)", exact: true })).toBeVisible();
+  await scan(page, shortURL, "Prediksi Aman (benign)");
   await expect(page.getByText(/Prediksi berdasarkan URL awal\. URL tujuan belum dapat dikonfirmasi/)).toBeVisible();
   await expect(page.getByText("Random Forest E1 · 7 fitur")).toBeVisible();
   expect(await scanHistory(page)).toMatchObject([{
