@@ -58,7 +58,7 @@ export function renderResearchProgress() {
       <span data-research-percent></span>
     </div>
     <progress data-research-progress max="100" value="0" aria-label="Progres tahap penelitian"></progress>
-    <p data-research-progress-text class="hint"></p>
+    <p data-research-progress-text class="hint" hidden></p>
     <p data-research-storage class="hint" hidden></p>
     <p data-research-error class="error" role="alert" hidden></p>
   </div>`;
@@ -68,9 +68,8 @@ export function renderStageButtons(stages) {
   return stages.map((stage) => `<button class="button secondary" data-research-run="${stage}" type="button" disabled>${researchStages[stage][1]}</button>`).join("");
 }
 
-export function renderResearchStage(stage, description) {
+export function renderResearchStage(stage) {
   return `<section class="card" id="research-stage-panel">
-    <p>${description}</p>
     <p id="selected-file" class="hint" data-research-selection></p>
     <div class="actions">${renderStageButtons([stage])}
       <a class="button secondary" href="#dataset">Buka Manajemen Dataset</a>
@@ -121,6 +120,7 @@ export function mountResearchControls(element, onUpdate = () => {}) {
     else progress.value = 0;
     const measured = ratio == null ? "" : `${formatResearchCount(processed)} / ${formatResearchCount(total)}`;
     detail.textContent = [message ?? "", measured].filter(Boolean).join(" · ");
+    detail.hidden = !detail.textContent;
     storage.textContent = snapshot.storageWarning ?? "";
     storage.hidden = !snapshot.storageWarning;
     error.hidden = !snapshot.error;

@@ -5,8 +5,8 @@ import { csv, download } from "../utils/storage.js";
 import { automaticResearch } from "../utils/automatic-research.js";
 import { mountResearchControls, renderResearchStage } from "../components/automatic-research.js";
 export function render() {
-  return `${heading("Ekstraksi Fitur", "Periksa fitur Python deterministik yang juga digunakan untuk pelatihan dan inferensi.")}
-    ${renderResearchStage("features", "Siapkan tabel fitur dataset dari partisi yang sudah diaudit.")}
+  return `${heading("Ekstraksi Fitur")}
+    ${renderResearchStage("features")}
     <div id="feature-dataset"></div>
     <section class="card"><form id="feature-form"><label for="feature-url">URL</label><div class="input-row"><input type="url" id="feature-url" placeholder="https://example.com/login" required maxlength="4096" /><button class="button" id="extract">Ekstraksi Fitur</button></div></form><p id="feature-error" role="alert" class="error" hidden></p></section><div id="feature-result"></div>`;
 }
@@ -57,7 +57,7 @@ export function mount() {
         importance: rf?.feature_importance?.[key] ?? "N/A",
       }));
       document.querySelector("#feature-result").innerHTML =
-        `<section class="card"><div class="section-heading"><h3>Skema: ${data.schema_version}</h3><button class="button secondary" id="export-features">Ekspor Fitur CSV</button></div>${table(
+        `<section class="card"><div class="section-heading"><h3>Hasil Ekstraksi URL</h3><button class="button secondary" id="export-features">Ekspor Fitur CSV</button></div>${table(
           [
             "Nama Fitur",
             "Nilai",

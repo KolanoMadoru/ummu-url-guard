@@ -12,8 +12,8 @@ const independentMetricKeys = ["accuracy", "precision", "recall", "f1", "roc_auc
 
 export function render() {
   const report = currentResearchReport();
-  return `${heading("Evaluasi Model", "Ukur performa pada data uji terpisah dengan phishing sebagai kelas positif.")}
-    ${renderResearchStage("evaluate", "Evaluasi konfigurasi yang sudah dilatih pada partisi uji yang tersimpan.")}
+  return `${heading("Evaluasi Model")}
+    ${renderResearchStage("evaluate")}
     ${report ? researchReportCaption(report) + renderResearchEvaluation(report)
       : empty("Selesaikan pelatihan dan evaluasi untuk melihat metrik penelitian.")}
     ${renderRedirectResearch()}

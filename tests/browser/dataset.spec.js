@@ -35,7 +35,8 @@ test("one CSV over 2 MiB uses feature batches and lets the user process individu
   await expect(action(page, "Halaman Selanjutnya")).toBeDisabled();
   await page.getByText("Jalankan per Tahap", { exact: true }).click();
   await action(page, "Audit dan Buat Split").click();
-  await expect(page.getByText("Tidak ditemukan kebocoran berdasarkan URL dan domain yang diperiksa.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pembagian Dataset" })).toBeVisible();
+  await expect(page.locator("#dataset-result").getByRole("row", { name: /Pelatihan.*Melatih model/ })).toBeVisible();
   await action(page, "Ekstrak Fitur Dataset").click();
   const filename = page.waitForEvent("download");
   await action(page, "Unduh 7 Fitur Dasar").click();

@@ -38,7 +38,9 @@ test("research workflow, paired redirects, private history and mobile navigation
     .getByLabel("URL", { exact: true })
     .fill("https://gooogle.com/login?token=private");
   await page.getByRole("button", { name: "Ekstraksi Fitur" }).click();
-  await expect(page.getByText("Skema: lexical-v2")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Hasil Ekstraksi URL" })).toBeVisible();
+  await expect(page.locator("#feature-result tbody tr")).toHaveCount(19);
+  await expect(page.locator("#feature-result")).not.toContainText("lexical-v2");
   await nav("Pemindai URL").click();
   await page
     .getByLabel("Masukkan URL")
@@ -98,6 +100,8 @@ test("research workflow, paired redirects, private history and mobile navigation
   await expect(page.locator("[data-research-status]")).toContainText("Penelitian Selesai", { timeout: 45000 });
   expect(trainingRequests).toEqual(["E1", "E2", "E3", "E4", "E5", "E6"]);
   await expect(page.getByRole("row", { name: "Data Duplikat 1" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pembagian Dataset" })).toBeVisible();
+  await expect(page.locator("#dataset-result")).not.toContainText("Tidak ditemukan kebocoran");
   await expect(page.getByRole("heading", { name: "Cakupan URL Pendek per Partisi" })).toBeVisible();
   const coverageReady = page.waitForEvent("download");
   await page.getByRole("button", { name: "Unduh Cakupan URL Pendek" }).click();
@@ -112,6 +116,9 @@ test("research workflow, paired redirects, private history and mobile navigation
   expect(report.rows).toBe(urls.length - 1);
   expect(report.scenario_kind).toBe("heuristic");
   expect(report.results).toHaveLength(6);
+  expect(report.audit).toMatchObject({
+    status: "passed", checks: { domain: 0, normalized_url: 0, related_url: 0 },
+  });
   expect(report.historical_destination_evidence).toEqual({ documented: 1, withProvenance: 1, invalid: 0 });
   expect(report.historical_redirect_metadata).toContainEqual({
     row: 202, documented_destination: true, resolution_status: "RESOLVED",
@@ -138,8 +145,7 @@ test("research workflow, paired redirects, private history and mobile navigation
     .toBeVisible();
   await expect(page.getByRole("heading", { name: "Evaluasi Penelitian", exact: true })).toBeVisible();
   await expect(page.getByText("Skor Pembanding pada Data Validasi")).toBeVisible();
-  await expect(page.getByText("Subset dibentuk dari ciri URL.", { exact: false })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Evaluasi Penelitian", exact: true })).toBeVisible();
+  await expect(page.getByText("Subset dibentuk dari ciri URL.", { exact: false })).toHaveCount(0);
   await nav("Analisis Hasil").click();
   await expect(page.locator("#research-f1")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });

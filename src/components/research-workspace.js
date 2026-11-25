@@ -37,7 +37,6 @@ export function renderShortenerCoverage(coverage) {
   return `<section aria-label="Cakupan URL Pendek per Partisi">
     <h4>Cakupan URL Pendek per Partisi</h4>
     <p>Kelompok independen yang memuat URL pendek benign <strong>${formatted(groups.benign)}</strong> dan phishing <strong>${formatted(groups.phishing)}</strong>. Satu kelompok dapat memuat kedua label.</p>
-    <p class="hint">URL dengan domain terdaftar yang sama tetap berada di satu partisi. Menambah tautan dari domain yang sama memperbanyak sampel dalam kelompok itu.</p>
     ${providers.length ? table(
       ["Penyedia", ...parts.flatMap(([, label]) => [`${label} benign`, `${label} phishing`])],
       providers.map((provider) => [provider.name, ...parts.flatMap(([part]) => [
@@ -169,7 +168,7 @@ export function renderResearchDashboard(report) {
     <span>Phishing</span><b>${formatted(totals.reduce((sum, part) => sum + part.phishing, 0))}</b>
     <span>Pembagian</span><b>${splitName(report)}</b>
     <span>Audit Kebocoran</span><b>${heuristic ? "Tidak ditemukan kebocoran berdasarkan URL dan domain yang diperiksa." : "Lolos pemeriksaan yang tercatat dalam ringkasan."}</b>
-    <span>Ekstraksi Fitur</span><b>Selesai${report.feature_schema ? ` · ${escape(report.feature_schema)}` : ""}</b>
+    <span>Ekstraksi Fitur</span><b>Selesai</b>
     <span>Pelatihan dan Evaluasi</span><b>${formatted(report.results.length)} konfigurasi selesai</b>
     </div>
     <p class="hint">${heuristic ? "Audit berjalan offline. Tujuan di balik tautan pendek dan hubungan konten situs berada di luar cakupan." : "Cakupan audit mengikuti data yang tersedia saat eksperimen dijalankan."}</p>
@@ -248,12 +247,11 @@ export function renderResearchEvaluation(report) {
     </details>
     ${renderShortenerCoverage(report.shortener_coverage)}
     <h3>Evaluasi per Skenario pada Data Uji</h3>
-    ${report.scenario_kind === "heuristic" ? '<p class="hint">Subset dibentuk dari ciri URL. Subset dapat bertumpang tindih. Indikasi kemiripan merek belum diverifikasi secara independen. Tujuan redirect historis tidak diketahui.</p>' : ""}
     <p class="hint">Metrik yang memerlukan kedua kelas, seperti ROC-AUC, hanya dapat dihitung jika benign dan phishing tersedia.</p>
     ${subsets.length ? groupedMetrics("Skenario", subsets) : "<p>Kategori penelitian belum tersedia pada data uji.</p>"}
     ${renderShortenerFalsePositives(report.results)}
     ${shorteners.length ? `<h3>Evaluasi per Layanan Pemendek</h3>${groupedMetrics("Layanan", shorteners)}` : ""}
-    <h3>Matriks Kebingungan</h3><p class="hint">Matriks menggunakan baris kelas aktual dan kolom prediksi.</p>
+    <h3>Matriks Kebingungan</h3>
     ${table(["ID", "Negatif Benar", "Positif Palsu", "Negatif Palsu", "Positif Benar"], report.results
       .filter((result) => result.metrics.confusion_matrix)
       .map((result) => [result.id, ...result.metrics.confusion_matrix.flat().map(formatted)]))}
@@ -268,7 +266,6 @@ export function renderResearchAnalysis(report) {
       .sort((a, b) => b[1] - a[1])
       .map(([key, weight]) => [result.id, featureLabel(key), percent(weight)]));
   return `<section class="card"><h3>Perbandingan Eksperimen</h3>
-    <p class="hint">Gunakan E1 dan E2 untuk membandingkan Random Forest dengan 7 dan 19 fitur pada data uji yang sama.</p>
     ${table(["ID", "Model", "Jumlah Fitur", ...chartMetrics.map((key) => metrics[key]), "Waktu Pelatihan", "Positif Palsu", "Negatif Palsu"],
       report.results.map((result) => [
         result.id, result.model_name, result.feature_set === "basic" ? 7 : 19,
@@ -278,7 +275,7 @@ export function renderResearchAnalysis(report) {
       ]))}
     <a class="button secondary" href="#evaluation">Lihat Matriks Kebingungan dan Evaluasi per Skenario</a></section>
     <div class="grid two">${chartMetrics.map((key) => plot(`research-${key}`, metrics[key])).join("")}</div>
-    ${featureImportance.length ? `<section class="card"><h3>Tingkat Kepentingan Fitur</h3><p class="hint">Bobot berbasis impuritas untuk model pohon.</p>${table(["ID", "Fitur", "Kepentingan"], featureImportance)}</section>` : ""}`;
+    ${featureImportance.length ? `<section class="card"><h3>Tingkat Kepentingan Fitur</h3>${table(["ID", "Fitur", "Kepentingan"], featureImportance)}</section>` : ""}`;
 }
 export function mountResearchAnalysis(report) {
   if (!report) return;

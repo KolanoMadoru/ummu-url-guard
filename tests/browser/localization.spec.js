@@ -15,7 +15,7 @@ const pages = [
   ["history", "Riwayat Deteksi"],
 ];
 
-for (const width of [1280, 390, 320]) {
+for (const width of [1280, 820, 390, 320]) {
   test(`Indonesian identity, all nine pages and footer at ${width}px`, async ({ page }) => {
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -23,6 +23,11 @@ for (const width of [1280, 390, 320]) {
     await page.goto("/");
     await expect(page.locator("html")).toHaveAttribute("lang", "id");
     await expect(page).toHaveTitle("UMMU URL GUARD");
+    const brand = page.locator(width < 760 ? "header" : "#sidebar")
+      .getByRole("link", { name: "UMMU URL Guard", exact: true });
+    await expect(brand).toBeVisible();
+    await expect(brand.locator("svg")).toHaveCount(1);
+    await expect(page.getByText("Penelitian Informatika", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Dikembangkan untuk Penelitian", { exact: true })).toHaveCount(0);
     for (const [route, label, heading = label] of pages) {
       if (width < 760) await page.getByRole("button", { name: "Buka atau tutup navigasi" }).click();
@@ -44,15 +49,19 @@ for (const width of [1280, 390, 320]) {
 
 test("existing history keeps internal labels and export schema while displaying Indonesian", async ({ page }) => {
   const record = {
-    id: "existing-record", url: "https://example.com/…", final_url: null,
-    prediction: "benign", probability: 0.1, online_status: "disabled", redirects: 0,
+    id: "existing-record", url: "https://example.com/…", final_url: "https://destination.example/…",
+    prediction: "benign", probability: 0.125, online_status: "complete", redirects: 1,
     timestamp: "2026-11-16T00:00:00Z", model_version: "trusted-v1", shortener: false, typosquatting: false,
   };
   await page.goto("/");
   await page.evaluate((record) => localStorage.setItem("ummu_url_guard_history", JSON.stringify([record])), record);
   await page.goto("/#history");
   await expect(page.locator("#history-table")).toContainText("Aman (benign)");
-  await expect(page.locator("#history-table")).toContainText("Dinonaktifkan");
+  await expect(page.locator("#history-table")).toContainText("Selesai");
+  await expect(page.locator("#history-table")).toContainText("Estimasi phishing 12,5%");
+  await page.getByRole("searchbox").fill("destination.example");
+  await expect(page.locator("#history-table")).toContainText(record.final_url);
+  await expect(page.getByText("Catatan Penyimpanan", { exact: true })).toHaveCount(0);
   await page.locator("#history-filter").selectOption("benign");
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Ekspor JSON", exact: true }).click();
