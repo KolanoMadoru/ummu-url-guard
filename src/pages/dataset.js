@@ -14,7 +14,8 @@ export function render() {
   return `${heading("Manajemen Dataset", "Unggah satu CSV berlabel dan jalankan penelitian dari validasi hingga evaluasi.")}
     <section class="card" id="dataset-workflow">
       <h2>Dataset Penelitian</h2>
-      <p>Gunakan kolom <code>url,label</code> dengan label <code>0</code> untuk benign dan <code>1</code> untuk phishing. Kolom tambahan diabaikan. Batas ${DATASET_LIMITS.maxFileBytes / 1048576} MiB dan 50.000 baris data.</p>
+      <p>Gunakan kolom <code>url,label</code> dengan label <code>0</code> untuk benign dan <code>1</code> untuk phishing. Batas ${DATASET_LIMITS.maxFileBytes / 1048576} MiB dan 50.000 baris data.</p>
+      <details><summary>Metadata redirect opsional</summary><p>Gunakan <code>final_url</code> untuk target terdokumentasi, <code>resolution_status</code> untuk status tercatat, <code>source</code> untuk sitasi atau ID arsip, dan <code>observed_at</code> untuk tanggal pengamatan.</p></details>
       <div id="dataset-drop" class="dataset-drop" aria-label="Letakkan file CSV di sini">
         ${filePicker()}<p>Seret satu CSV ke sini atau pilih file.</p>
       </div>
@@ -57,6 +58,7 @@ const splitLabels = {
 
 function renderSummary(dataset) {
   const issues = dataset.issues?.slice(0, 20) ?? [];
+  const evidence = dataset.destinationEvidence;
   return `<section class="card">
     <h3>Ringkasan Dataset</h3>
     ${table(["Ukuran", "Nilai"], [
@@ -70,6 +72,11 @@ function renderSummary(dataset) {
       ["Phishing", count(dataset.phishing)],
       ["Tautan Pendek Teridentifikasi", count(Object.values(dataset.shorteners ?? {}).reduce((sum, n) => sum + n, 0))],
       ["Indikasi Kemiripan Merek", count(dataset.brand_matches)],
+      ...(evidence?.documented || evidence?.invalid ? [
+        ["Tujuan Historis Tercatat", count(evidence.documented)],
+        ["Tujuan dengan Sumber dan Tanggal", count(evidence.withProvenance)],
+        ["Metadata Tujuan Tidak Valid", count(evidence.invalid)],
+      ] : []),
       ["SHA-256", dataset.hash],
     ])}
     ${distribution("Layanan Pemendek", dataset.shorteners)}

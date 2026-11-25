@@ -50,13 +50,16 @@ def test_scan_defaults_to_offline_and_shares_the_original_url_features(client, m
     assert scan['features']['url_length'] == len(payload['url'])
 
 
-@pytest.mark.parametrize(('enabled', 'payload', 'status'), [
-    ('0', {'url': 'https://t.ly/token', 'check_redirect': True}, 'disabled'),
-    ('1', {'url': 'https://t.ly/token'}, 'not_requested'),
-    ('1', {'url': 'https://t.ly/?q=token', 'check_redirect': True}, 'not_applicable'),
-    ('1', {'url': 'https://example.com/token', 'check_redirect': True}, 'not_applicable'),
+@pytest.mark.parametrize(('enabled', 'payload', 'status', 'should_predict'), [
+    ('0', {'url': 'https://t.ly/token', 'check_redirect': True}, 'disabled', False),
+    ('1', {'url': 'https://t.ly/token'}, 'not_requested', False),
+    ('0', {'url': 'https://example.com/token', 'check_redirect': True}, 'disabled', True),
+    ('1', {'url': 'https://example.com/token'}, 'not_requested', True),
+    ('1', {'url': 'https://t.ly/?q=token'}, 'not_requested', True),
 ])
-def test_scan_requires_explicit_opt_in_and_a_known_token(client, monkeypatch, enabled, payload, status):
+def test_scan_requires_explicit_opt_in_and_online_configuration(
+    client, monkeypatch, enabled, payload, status, should_predict,
+):
     head = Mock(side_effect=AssertionError('HEAD must not be called'))
     predict = Mock(return_value={'available': True, 'prediction': 'benign', 'probability': 0.15, 'model_version': 'test'})
     monkeypatch.setenv('ONLINE_SCAN_ENABLED', enabled)
@@ -66,16 +69,19 @@ def test_scan_requires_explicit_opt_in_and_a_known_token(client, monkeypatch, en
     assert response.status_code == 200
     result = response.json()
     assert result['online']['status'] == status
+    assert result['online']['resolution_status'] == status.upper()
     assert result['destination'] is None
     assert result['initial_url'] == payload['url']
     assert len(result['features']) == 19
     head.assert_not_called()
-    if status == 'not_applicable':
+    if should_predict:
         assert result['available'] is True and result['prediction'] == 'benign'
+        assert result['prediction_target'] == 'initial'
         assert predict.call_args.args[0]['features'] == result['features']
         assert predict.call_count == 1
     else:
         assert result['available'] is False and result['prediction'] is None
+        assert result['prediction_target'] is None
         predict.assert_not_called()
 
 
@@ -91,15 +97,21 @@ def dns_response(address):
     return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (address, 443))]
 
 
-def test_scan_extracts_initial_and_observed_destination_with_same_feature_schema(client, monkeypatch):
+@pytest.mark.parametrize(('initial_url', 'normalized_url', 'known_shortener'), [
+    ('HTTPS://T.LY:443/Token', 'https://t.ly/Token', True),
+    ('https://shorturl.at/Token', 'https://shorturl.at/Token', False),
+])
+def test_scan_extracts_initial_and_observed_destination_with_same_feature_schema(
+    client, monkeypatch, initial_url, normalized_url, known_shortener,
+):
     monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
     monkeypatch.setattr(scanner.socket, 'getaddrinfo', lambda *_a, **_kw: dns_response('93.184.216.34'))
     destination_url = 'https://destination.example/login/123?a=1'
     head = Mock(side_effect=[(302, destination_url), (200, None)])
     monkeypatch.setattr(scanner, 'pinned_head', head)
+    monkeypatch.setattr(scanner, 'pinned_get', Mock(return_value=(200, None)))
     predict = Mock(return_value={'available': True, 'prediction': 'phishing', 'probability': 0.9, 'model_version': 'test'})
     monkeypatch.setattr(index.production, 'predict', predict)
-    initial_url = 'HTTPS://T.LY:443/Token'
     response = client.post('/api/scan', json={'url': initial_url, 'check_redirect': True})
     assert response.status_code == 200
     result = response.json()
@@ -107,21 +119,25 @@ def test_scan_extracts_initial_and_observed_destination_with_same_feature_schema
     assert result['initial_url'] == initial_url
     assert result['features'] == client.post('/api/features', json={'url': initial_url}).json()['features']
     assert destination['features'] == client.post('/api/features', json={'url': destination_url}).json()['features']
-    assert result['features']['shortener'] == 1
+    assert result['features']['shortener'] == int(known_shortener)
     assert destination['features']['shortener'] == 0
     assert result['basic_features'] == list(index.BASIC_FEATURES)
     assert destination['schema_version'] == result['schema_version']
     assert result['online']['redirect_count'] == 1
     assert result['online']['status'] == 'complete'
+    assert result['online']['resolution_status'] == 'RESOLVED'
+    assert result['online']['destination_confirmed'] is True
+    assert result['online']['is_redirected'] is True
     assert destination['url'] == destination_url
     assert result['prediction'] is None and result['available'] is False
+    assert result['prediction_target'] == 'destination'
     assert result['probability'] is None and result['model_version'] is None
     assert destination['available'] is True and destination['prediction'] == 'phishing'
     assert destination['probability'] == 0.9 and destination['model_version'] == 'test'
     assert predict.call_args.args[0]['url'] == destination_url
     assert predict.call_args.args[0]['features'] == destination['features']
     assert predict.call_count == 1
-    assert [call.args[0] for call in head.call_args_list] == ['https://t.ly/Token', destination_url]
+    assert [call.args[0] for call in head.call_args_list] == [normalized_url, destination_url]
 
 
 @pytest.mark.parametrize(('second_response', 'address', 'reason', 'head_calls'), [
@@ -158,9 +174,11 @@ def test_scan_does_not_report_the_shortener_itself_as_a_destination(client, monk
     monkeypatch.setattr(scanner, 'pinned_head', Mock(return_value=(200, None)))
     monkeypatch.setattr(scanner, 'pinned_get', Mock(return_value=(200, None)))
     result = client.post('/api/scan', json={'url': 'https://t.ly/token', 'check_redirect': True}).json()
-    assert result['online']['status'] == 'no_redirect'
+    assert result['online']['resolution_status'] == 'NO_REDIRECT'
+    assert result['online']['destination_confirmed'] is False
     assert result['online']['final_url'] is None
     assert result['destination'] is None
+    assert result['prediction_target'] is None
 
 
 def test_scan_returns_a_redirect_recovered_with_get_headers(client, monkeypatch):
@@ -170,8 +188,101 @@ def test_scan_returns_a_redirect_recovered_with_get_headers(client, monkeypatch)
     monkeypatch.setattr(scanner, 'pinned_get', Mock(return_value=(302, 'https://destination.example/landing')))
     result = client.post('/api/scan', json={'url': 'https://t.ly/token', 'check_redirect': True}).json()
     assert result['online']['status'] == 'complete'
-    assert result['online']['chain'][0]['method'] == 'GET'
+    assert [hop['method'] for hop in result['online']['chain']] == ['HEAD', 'GET', 'HEAD']
     assert result['destination']['url'] == 'https://destination.example/landing'
+
+
+def test_ordinary_url_with_no_redirect_is_predicted_from_initial_features(client, monkeypatch):
+    url = 'https://ordinary.example/path'
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
+    monkeypatch.setattr(scanner.socket, 'getaddrinfo', lambda *_a, **_kw: dns_response('93.184.216.34'))
+    monkeypatch.setattr(scanner, 'pinned_head', Mock(return_value=(200, None)))
+    monkeypatch.setattr(scanner, 'pinned_get', Mock(return_value=(200, None)))
+    predict = Mock(return_value={'available': True, 'prediction': 'benign'})
+    monkeypatch.setattr(index.production, 'predict', predict)
+    result = client.post('/api/scan', json={'url': url, 'check_redirect': True}).json()
+    assert result['online']['resolution_status'] == 'NO_REDIRECT'
+    assert result['online']['final_url'] is None
+    assert result['prediction_target'] == 'initial'
+    assert result['prediction'] == 'benign' and result['destination'] is None
+    predict.assert_called_once()
+    assert predict.call_args.args[0]['url'] == url
+
+
+@pytest.mark.parametrize(('status', 'resolution_status'), [(403, 'ACCESS_BLOCKED'), (404, 'HTTP_ERROR')])
+def test_scan_retains_lexical_features_without_an_unverified_prediction(
+    client, monkeypatch, status, resolution_status,
+):
+    url = 'https://ordinary.example/path'
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
+    monkeypatch.setattr(scanner.socket, 'getaddrinfo', lambda *_a, **_kw: dns_response('93.184.216.34'))
+    monkeypatch.setattr(scanner, 'pinned_head', Mock(return_value=(status, None)))
+    get = Mock(side_effect=AssertionError('This HTTP status is terminal'))
+    monkeypatch.setattr(scanner, 'pinned_get', get)
+    predict = Mock(side_effect=AssertionError('The unresolved check must not predict'))
+    monkeypatch.setattr(index.production, 'predict', predict)
+    result = client.post('/api/scan', json={'url': url, 'check_redirect': True}).json()
+    assert result['online']['resolution_status'] == resolution_status
+    assert result['online']['http_status'] == status
+    assert result['features']['url_length'] == len(url)
+    assert result['prediction_target'] is None and result['prediction'] is None
+    get.assert_not_called()
+    predict.assert_not_called()
+
+
+def test_resolver_tracks_relative_redirects_and_does_not_infer(client, monkeypatch):
+    original = 'http://links.example/a/link'
+    destination = 'https://links.example/final'
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '1')
+    monkeypatch.setattr(scanner.socket, 'getaddrinfo', lambda *_a, **_kw: dns_response('93.184.216.34'))
+    head = Mock(side_effect=[(301, 'https://links.example/a/link'), (307, '../final'), (200, None)])
+    monkeypatch.setattr(scanner, 'pinned_head', head)
+    monkeypatch.setattr(scanner, 'pinned_get', Mock(return_value=(200, None)))
+    predict = Mock(side_effect=AssertionError('The resolver does not run inference'))
+    monkeypatch.setattr(index.production, 'predict', predict)
+
+    response = client.post('/api/resolve-url', json={'url': original})
+    assert response.status_code == 200
+    assert response.headers['Cache-Control'] == 'no-store'
+    result = response.json()
+    assert result['original_url'] == original and result['final_url'] == destination
+    assert result['original_domain'] == result['final_domain'] == 'links.example'
+    assert result['is_short_url'] is False and result['is_redirected'] is True
+    assert result['redirect_count'] == 2 and result['destination_confirmed'] is True
+    assert [row['url'] for row in result['redirect_chain']] == [
+        original, 'https://links.example/a/link', destination,
+    ]
+    assert result['resolution_status'] == 'RESOLVED' and result['http_status'] == 200
+    assert result['error_code'] is None and result['error_message'] is None
+    assert result['response_time_ms'] >= 0 and result['resolved_at']
+    assert 'last_observed_url' in result
+    predict.assert_not_called()
+
+
+def test_resolver_validates_input_without_echoing_credentials_and_checks_opt_in(client, monkeypatch):
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '0')
+    resolver = Mock(side_effect=AssertionError('Disabled or invalid requests must not use the resolver'))
+    monkeypatch.setattr(index, 'scan_url', resolver)
+    disabled = client.post('/api/resolve-url', json={'url': 'https://t.ly/token'})
+    assert disabled.status_code == 200
+    assert disabled.json()['resolution_status'] == 'DISABLED'
+    assert disabled.json()['destination_confirmed'] is False
+    assert disabled.json()['final_url'] is None
+    invalid = client.post('/api/resolve-url', json={'url': 'https://example:private-secret@example.com/'})
+    assert invalid.status_code == 422
+    assert invalid.json()['resolution_status'] == 'INVALID_URL'
+    assert 'private-secret' not in invalid.text
+    resolver.assert_not_called()
+
+
+def test_resolver_and_scanner_share_a_rate_limit(client, monkeypatch):
+    monkeypatch.setenv('ONLINE_SCAN_ENABLED', '0')
+    monkeypatch.setitem(index.RATE_LIMITS, 'url_scan', 2)
+    payload = {'url': 'https://example.com/'}
+    assert client.post('/api/resolve-url', json=payload).status_code == 200
+    assert client.post('/api/scan', json=payload).status_code == 200
+    assert client.post('/api/resolve-url', json=payload).status_code == 429
+    assert client.get('/api/health').status_code == 200
 
 
 def test_analyze_and_train(client, research_csv):

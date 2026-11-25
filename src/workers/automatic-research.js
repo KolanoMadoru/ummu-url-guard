@@ -70,8 +70,16 @@ async function saveCheckpoint() {
 
 function activateModel() {
   const result = checkpoint.results.find((entry) => entry.configuration_id === "E2");
+  const e1 = checkpoint.results.find((entry) => entry.configuration_id === "E1");
   const model = checkpoint.report && result?.model
-    ? { forest: result.model, version: checkpoint.report.experiment_id, datasetHash: checkpoint.dataset.hash }
+    ? {
+        forest: result.model,
+        version: checkpoint.report.experiment_id,
+        datasetHash: checkpoint.dataset.hash,
+        ...(e1?.model && e1.fallback ? {
+          fallback: { forest: e1.model, qualification: e1.fallback, version: checkpoint.report.experiment_id },
+        } : {}),
+      }
     : null;
   notify("model", { model });
 }
@@ -190,7 +198,18 @@ async function prepare(file, signal) {
   const featureProgress = (count) => advance(count, parsed.rows.length, "Memeriksa URL dan menghitung fitur leksikal");
   featureProgress(0);
   const { extracted, metadata } = await extractURLs(parsed.rows.map((row) => row.url), signal, { onProgress: featureProgress });
-  const prepared = prepareAutomaticData(parsed.rows, extracted);
+  // Historical destinations are metadata. Validate their syntax without resolving them.
+  const documented = parsed.rows.filter((row) => row.documentedDestination);
+  const destinationResults = new Map();
+  if (documented.length) {
+    const onProgress = (count) => advance(count, documented.length, "Memeriksa struktur URL tujuan historis");
+    onProgress(0);
+    const { extracted: destinations } = await extractURLs(documented.map((row) => row.documentedDestination), signal, {
+      expected: metadata, onProgress,
+    });
+    for (const [i, row] of documented.entries()) destinationResults.set(row.row, destinations[i]);
+  }
+  const prepared = prepareAutomaticData(parsed.rows, extracted, destinationResults);
   const { summary, rows, groups } = prepared;
   checkpoint.dataset = {
     ...summary,
@@ -208,8 +227,18 @@ async function prepare(file, signal) {
   checkpoint.prepared = {
     groups, summary,
     rows: rows.map((original) => {
-      const { row, label, provider, brand, group, features } = original;
-      return { row, label, provider, brand, group, ...redirectKeys(original, checkpoint.keySalt), features: new Float32Array(features) };
+      const {
+        row, label, provider, brand, group, features, resolutionFailed, resolutionStatus,
+        destinationKeys, destinationAlternates, destinationMetadata, evidenceSource, observedAt,
+      } = original;
+      const fingerprint = (keys) => redirectKeys(keys, checkpoint.keySalt);
+      return {
+        row, label, provider, brand, group, ...fingerprint(original), features: new Float32Array(features),
+        resolutionFailed, resolutionStatus, evidenceSource, observedAt,
+        ...(destinationKeys ? { destinationKeys: fingerprint(destinationKeys) } : {}),
+        ...(destinationAlternates?.length ? { destinationAlternates: destinationAlternates.map(fingerprint) } : {}),
+        ...(destinationMetadata?.some((record) => record.row !== row) ? { destinationMetadata } : {}),
+      };
     }),
   };
 }
@@ -250,7 +279,7 @@ function matrix() {
   for (const [i, row] of rows.entries()) {
     for (const [j, value] of row.features.entries()) view.setFloat32((i * 19 + j) * 4, value, true);
     labels[i] = row.label;
-    flags[i] = (row.provider ? 1 : 0) | (row.brand ? 2 : 0);
+    flags[i] = (row.provider ? 1 : 0) | (row.brand ? 2 : 0) | (row.provider && row.resolutionFailed ? 4 : 0);
   }
   for (const [number, part] of PARTITIONS.entries())
     for (const i of checkpoint.split[part]) partitions[i] = number;
@@ -303,6 +332,7 @@ function evaluate() {
     split: dataset.split,
     shorteners: dataset.shorteners,
     shortener_coverage: dataset.shortenerCoverage,
+    ...(dataset.destinationEvidence ? { historical_destination_evidence: dataset.destinationEvidence } : {}),
     preprocessing: Object.fromEntries(
       ["source_rows", "valid_rows", "invalid_rows", "duplicate_rows", "conflicting_rows", "blank_rows"].map((key) => [key, dataset[key]]),
     ),
@@ -386,6 +416,14 @@ function exportData(kind) {
       ...report, random_seed: 42, feature_names: metadata.feature_names, basic_features: metadata.basic_features,
       preprocessing_method: "trim, validate HTTP(S), deduplicate normalized URLs, quarantine conflicting labels",
       split_warnings: dataset.warnings,
+      historical_redirect_metadata: prepared.rows.flatMap((record) =>
+        record.destinationKeys || record.resolutionStatus || record.evidenceSource || record.observedAt
+          ? [{
+              row: record.row, documented_destination: Boolean(record.destinationKeys),
+              resolution_status: record.resolutionStatus ?? null, source: record.evidenceSource ?? null,
+              observed_at: record.observedAt ?? null,
+              ...(record.destinationMetadata ? { destination_provenance: record.destinationMetadata } : {}),
+            }] : []),
       experiments: results.map(({ model, test_predictions, ...result }) => ({
         ...result,
         test_predictions: test_predictions.map(([prediction, score], i) => ({

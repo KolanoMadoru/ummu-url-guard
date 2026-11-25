@@ -5,6 +5,13 @@ export const AUTOMATIC_MAX_ROWS = Math.min(50_000, DATASET_LIMITS.maxRows);
 const SPLIT_SEED = 42;
 const PARTITIONS = ["train", "validation", "test"];
 const RATIOS = [0.7, 0.15, 0.15];
+const HISTORICAL_COLUMNS = ["final_url", "resolution_status", "observed_at", "source"];
+const RECORDED_FAILURES = new Set([
+  "TIMEOUT", "DNS_ERROR", "HTTP_ERROR", "ACCESS_BLOCKED", "REDIRECT_LOOP",
+  "MAX_REDIRECT_EXCEEDED", "UNSUPPORTED_REDIRECT", "UNSAFE_DESTINATION", "NETWORK_ERROR",
+]);
+const OTHER_RECORDED_STATUSES = new Set(["RESOLVED", "NO_REDIRECT", "INVALID_URL"]);
+const IDENTITY_KEYS = ["normalized", "related", "domain"];
 const ISSUE_MESSAGES = {
   blank: "Baris kosong diabaikan.",
   malformed: "Jumlah kolom berbeda dari header CSV.",
@@ -20,10 +27,34 @@ function issue(row, code) {
   return { row, code, message: ISSUE_MESSAGES[code] };
 }
 
+function observedDate(text) {
+  const time = /^(\d{4}-\d{2}-\d{2})(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2}))?$/u.exec(text);
+  if (!time || !Number.isFinite(Date.parse(text))) return null;
+  const day = new Date(time[1]);
+  return day.toISOString().slice(0, 10) === time[1] ? text : null;
+}
+
+function historicalMetadata(cells, columns) {
+  if (!columns.size) return {};
+  const value = (key) => cells[columns.get(key)]?.trim() ?? "";
+  const code = value("resolution_status").toUpperCase().replaceAll("-", "_");
+  const resolutionFailed = RECORDED_FAILURES.has(code);
+  const source = value("source");
+  return {
+    documentedDestination: value("final_url") || null,
+    resolutionStatus: resolutionFailed || OTHER_RECORDED_STATUSES.has(code) ? code : null,
+    resolutionFailed,
+    observedAt: observedDate(value("observed_at")),
+    evidenceSource: source.length > 0 && source.length <= 200 && !/[\x00-\x1f\x7f]|https?:\/\//iu.test(source)
+      ? source : null,
+  };
+}
+
 export async function readAutomaticCSV(file, { onProgress, signal } = {}) {
   const rows = [], issues = [];
   let record = 0, totalRecords = 0, blankRecords = 0;
   let urlColumn = -1, labelColumn = -1, width = 0;
+  const optionalColumns = new Map();
   const datasetHash = await streamCSVRecords(file, {
     onProgress,
     signal,
@@ -45,6 +76,13 @@ export async function readAutomaticCSV(file, { onProgress, signal } = {}) {
         if (urlColumn < 0 || labelColumn < 0 ||
             urlColumn !== header.lastIndexOf("url") || labelColumn !== header.lastIndexOf("label"))
           throw new Error("CSV harus memiliki masing-masing satu kolom url dan label.");
+        for (const name of HISTORICAL_COLUMNS) {
+          const index = header.indexOf(name);
+          if (index < 0) continue;
+          if (index !== header.lastIndexOf(name))
+            throw new Error(`CSV memiliki lebih dari satu kolom ${name}.`);
+          optionalColumns.set(name, index);
+        }
         width = cells.length;
         return;
       }
@@ -61,13 +99,18 @@ export async function readAutomaticCSV(file, { onProgress, signal } = {}) {
       } else if (label !== "0" && label !== "1") {
         issues.push(issue(record, "invalid_label"));
       } else {
-        rows.push({ row: record, url, label: Number(label) });
+        rows.push({ row: record, url, label: Number(label), ...historicalMetadata(cells, optionalColumns) });
       }
     },
   });
   if (!width || !totalRecords)
     throw new Error("CSV harus memiliki header url,label dan minimal satu record data.");
   return { rows, issues, totalRecords, blankRecords, datasetHash };
+}
+
+function identityValues(row, key) {
+  return [row[key], row.destinationKeys?.[key], ...(row.destinationAlternates ?? []).map((target) => target[key])]
+    .filter((value) => typeof value === "string" && value);
 }
 
 function makeGroups(rows) {
@@ -90,8 +133,8 @@ function makeGroups(rows) {
     parents[Math.max(a, b)] = Math.min(a, b);
   }
   rows.forEach((row, i) => {
-    link(`domain:${row.domain}`, i);
-    link(`related:${row.related}`, i);
+    for (const key of IDENTITY_KEYS)
+      for (const value of identityValues(row, key)) link(`${key}:${value}`, i);
   });
   const components = new Map();
   rows.forEach((row, i) => {
@@ -108,7 +151,7 @@ function maskedOrigin(normalized) {
   return authority ? `${authority}/…` : "URL tervalidasi";
 }
 
-export function prepareAutomaticData(rawRows, extracted) {
+export function prepareAutomaticData(rawRows, extracted, destinationResults = new Map()) {
   if (extracted.length !== rawRows.length)
     throw new Error("Jumlah hasil ekstraksi berbeda dari jumlah URL yang dikirim.");
   const issues = [], byURL = new Map();
@@ -116,6 +159,7 @@ export function prepareAutomaticData(rawRows, extracted) {
     source_rows: rawRows.length, valid_rows: 0, invalid_rows: 0, duplicate_rows: 0,
     conflicting_rows: 0, conflict_groups: 0, benign: 0, phishing: 0,
     brand_matches: 0, shorteners: {}, preview: [],
+    destinationEvidence: { documented: 0, withProvenance: 0, invalid: 0 },
   };
   rawRows.forEach((raw, i) => {
     const result = extracted[i];
@@ -129,6 +173,14 @@ export function prepareAutomaticData(rawRows, extracted) {
         !Array.isArray(features) || features.length !== 19 || !features.every(Number.isFinite))
       throw new Error("Hasil ekstraksi fitur tidak lengkap.");
     const row = { ...raw, normalized, related, domain, features, provider, brand };
+    if (raw.documentedDestination) {
+      const target = destinationResults.get(raw.row);
+      if (target && IDENTITY_KEYS.every((key) => typeof target[key] === "string" && target[key])) {
+        row.destinationKeys = Object.fromEntries(IDENTITY_KEYS.map((key) => [key, target[key]]));
+      } else {
+        summary.destinationEvidence.invalid++;
+      }
+    }
     if (!byURL.has(normalized)) byURL.set(normalized, []);
     byURL.get(normalized).push(row);
   });
@@ -141,6 +193,20 @@ export function prepareAutomaticData(rawRows, extracted) {
       summary.conflicting_rows += matches.length;
       for (const row of matches) issues.push(issue(row.row, "conflict"));
       continue;
+    }
+    const documented = matches.filter((row) => row.destinationKeys);
+    if (documented.length) {
+      // A later duplicate can document a different target. All valid targets remain audit links.
+      const distinct = new Map(documented.map((row) => [row.destinationKeys.normalized, row.destinationKeys]));
+      const [primary, ...alternates] = distinct.values();
+      first.destinationKeys = primary;
+      if (alternates.length) first.destinationAlternates = alternates;
+      first.destinationMetadata = documented.map((row) => ({
+        row: row.row, source: row.evidenceSource ?? null, observed_at: row.observedAt ?? null,
+      }));
+      summary.destinationEvidence.documented++;
+      if (first.destinationMetadata.some(({ source, observed_at }) => source && observed_at))
+        summary.destinationEvidence.withProvenance++;
     }
     rows.push(first);
     summary[first.label === 0 ? "benign" : "phishing"]++;
@@ -260,9 +326,10 @@ function auditPartitions(rows, partitions) {
     const used = new Map(), conflicts = new Set();
     PARTITIONS.forEach((name, part) => {
       for (const i of partitions[name]) {
-        const value = rows[i][field];
-        if (!used.has(value)) used.set(value, part);
-        else if (used.get(value) !== part) conflicts.add(value);
+        for (const value of identityValues(rows[i], field)) {
+          if (!used.has(value)) used.set(value, part);
+          else if (used.get(value) !== part) conflicts.add(value);
+        }
       }
     });
     counts[count] = conflicts.size;
@@ -324,7 +391,7 @@ export function summarizeShortenerCoverage(rows, partitions) {
   };
 }
 
-export function splitAutomaticData({ rows, groups }) {
+export function splitAutomaticData({ rows, groups, summary: preprocessing }) {
   if (!rows.length) throw new Error("Tidak ada URL valid untuk dibagi. Periksa laporan baris yang tidak dipakai.");
   const details = groups.map((indices) => ({ indices, stats: groupStats(indices, rows) }));
   const groupCountByLabel = [1, 2].map((label) =>
@@ -343,6 +410,11 @@ export function splitAutomaticData({ rows, groups }) {
   if (!best) best = placeGroups(details, targets, random, classSeeds(details));
 
   const partitions = {}, summary = {}, warnings = [];
+  const evidence = preprocessing?.destinationEvidence;
+  if (evidence?.invalid)
+    warnings.push(`${evidence.invalid} nilai final_url opsional tidak valid dan tidak dipakai dalam audit hubungan URL.`);
+  if (evidence?.documented > evidence?.withProvenance)
+    warnings.push("Sebagian tujuan historis belum memiliki sumber dan tanggal observasi yang lengkap.");
   PARTITIONS.forEach((name, i) => {
     const assigned = best.assignments[i];
     partitions[name] = assigned.flatMap((group) => group.indices).sort((a, b) => a - b);

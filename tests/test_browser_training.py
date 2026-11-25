@@ -89,6 +89,41 @@ def test_other_configurations_return_comparison_metrics_only(batch, configuratio
     assert result["model_name"] == name
     assert result["feature_names"] == list(names)
     assert "model" not in result
+    assert "fallback" not in result
+    assert result["validation_metrics"]["roc_auc"] is not None
+
+
+def test_e1_exports_a_basic_fallback_measured_on_documented_failures(batch):
+    matrix, labels, splits, flags = batch
+    # Include both classes in every split, while leaving other short links unmarked.
+    failed = ((flags & 1) != 0) & (np.arange(len(labels)) % 4 != 0)
+    result = train_browser_experiment("E1", pack(matrix, labels, splits, flags | (failed * 4)))
+
+    assert result["model"]["feature_names"] == list(BASIC_FEATURES)
+    report = result["fallback"]
+    assert report["basis"] == "url_awal"
+    assert report["training_rows"] == int(np.sum(failed & (splits == 0)))
+    assert report["validation"]["rows"] == int(np.sum(failed & (splits == 1)))
+    test = splits == 2
+    assert report["testing"]["rows"] == int(np.sum(failed & test))
+    assert report["testing"]["rows"] < result["scenario_metrics"]["pendek"]["rows"]
+    assert all(report[key]["roc_auc"] is not None for key in ["validation", "testing"])
+
+    basic_matrix = matrix[test][:, [FEATURE_NAMES.index(name) for name in BASIC_FEATURES]]
+    expected_scores = np.array([predict_forest(result["model"], row) for row in basic_matrix])
+    predicted, scored = np.asarray(result["test_predictions"]).T
+    np.testing.assert_allclose(scored, expected_scores, rtol=0, atol=1e-12)
+    np.testing.assert_array_equal(predicted, expected_scores > 0.5)
+    failed_test = failed[test]
+    assert report["testing"]["accuracy"] == pytest.approx(np.mean(predicted[failed_test] == labels[test][failed_test]))
+
+
+def test_e1_does_not_enable_fallback_if_one_partition_lacks_failed_links_from_both_classes(batch):
+    matrix, labels, splits, flags = batch
+    failed = ((flags & 1) != 0) & ((splits != 1) | (labels == 0))
+    result = train_browser_experiment("E1", pack(matrix, labels, splits, flags | (failed * 4)))
+    assert "model" not in result
+    assert "fallback" not in result
     assert result["validation_metrics"]["roc_auc"] is not None
 
 
@@ -127,6 +162,8 @@ def test_invalid_batches_rejected_before_training(batch):
         train_browser_experiment("E2", pack(matrix, labels, splits + 1, flags))
     with pytest.raises(ValueError, match="penanda skenario"):
         train_browser_experiment("E2", pack(matrix, labels, splits, flags + 4))
+    with pytest.raises(ValueError, match="penanda skenario"):
+        train_browser_experiment("E2", pack(matrix, labels, splits, flags + 8))
     with pytest.raises(ValueError, match="kedua kelas"):
         train_browser_experiment("E2", pack(matrix, labels, np.minimum(splits, 1), flags))
     matrix[0, 0] = np.nan

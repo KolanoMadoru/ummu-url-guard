@@ -73,12 +73,21 @@ test("research workflow, paired redirects, private history and mobile navigation
     urls.push({ url: `https://login.group${i}.example/verify?name=private`, label: 1 });
   }
   for (const host of shorteners)
-    for (const index of [0, 1, 2, 3])
-      urls.push({ url: `https://${host}/synthetic-${index}?token=private-original`, label: index % 2 });
+    for (const index of [0, 1, 2, 3]) {
+      const knownDestination = host === "bit.ly" && index === 0;
+      urls.push({
+        url: `https://${host}/synthetic-${index}?token=private-original`, label: index % 2,
+        resolution_status: knownDestination ? "RESOLVED" : "TIMEOUT",
+        final_url: knownDestination ? urls[0].url : "",
+        observed_at: "2026-01-01", source: "Arsip sintetis",
+      });
+    }
   urls.push(urls[0]);
   await page.locator("#dataset-file").setInputFiles({
     name: "synthetic-test-only.csv", mimeType: "text/csv",
-    buffer: Buffer.from(Papa.unparse(urls)),
+    buffer: Buffer.from(Papa.unparse(urls, {
+      columns: ["url", "label", "final_url", "resolution_status", "source", "observed_at"],
+    })),
   });
   const trainingRequests = [];
   page.on("request", (request) => {
@@ -103,6 +112,15 @@ test("research workflow, paired redirects, private history and mobile navigation
   expect(report.rows).toBe(urls.length - 1);
   expect(report.scenario_kind).toBe("heuristic");
   expect(report.results).toHaveLength(6);
+  expect(report.historical_destination_evidence).toEqual({ documented: 1, withProvenance: 1, invalid: 0 });
+  expect(report.historical_redirect_metadata).toContainEqual({
+    row: 202, documented_destination: true, resolution_status: "RESOLVED",
+    source: "Arsip sintetis", observed_at: "2026-01-01",
+  });
+  const fallback = report.experiments.find(({ configuration_id }) => configuration_id === "E1").fallback;
+  expect(fallback.basis).toBe("url_awal");
+  expect(fallback.validation.class_distribution.benign).toBeGreaterThan(0);
+  expect(fallback.testing.class_distribution.phishing).toBeGreaterThan(0);
   expect(report.shortener_coverage.groups).toEqual({ benign: shorteners.size, phishing: shorteners.size });
   expect(report.shortener_coverage.providers).toHaveLength(shorteners.size);
   for (const provider of report.shortener_coverage.providers) {
@@ -143,6 +161,9 @@ async function checkHistoricalRedirects(page, urls) {
   const split = Papa.parse(await readFile(await (await splitDownload).path(), "utf8"),
     { header: true, skipEmptyLines: true }).data;
   const inputURL = ({ row }) => urls[Number(row) - 2].url;
+  const linkedOrigin = split.find((entry) => inputURL(entry) === urls.find((record) => record.final_url).url);
+  const linkedDestination = split.find((entry) => inputURL(entry) === urls[0].url);
+  expect(linkedOrigin.split).toBe(linkedDestination.split);
   const trainingRow = split.find(({ split }) => split === "train");
   const heldOut = split.filter((entry) =>
     entry.split === "test" && shorteners.has(new URL(inputURL(entry)).hostname));

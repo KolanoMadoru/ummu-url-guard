@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 import threading
 import time
+from urllib.parse import urlsplit
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -20,10 +21,11 @@ from ml.browser_training import MAX_BROWSER_TRAINING_BYTES, train_browser_experi
 from ml.dataset import read_dataset, MAX_UPLOAD_BYTES
 from ml.features import (
     BASIC_FEATURES, FEATURE_NAMES, MAX_URL_LENGTH, PSL_VERSION, REFERENCE_VERSION,
-    SCHEMA_VERSION, SHORTENER_VERSION, extract_features, related_url_key,
+    SCHEMA_VERSION, SHORTENER_VERSION, extract_features, normalize_url, registered_domain,
+    related_url_key, shortener_provider,
 )
 from ml.model import ProductionModel, run_experiment
-from ml.scanner import scan_url
+from ml.scanner import resolution_result, scan_url
 
 app = FastAPI(title="UMMU URL GUARD", version="0.1.0", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
 origins = [s.strip() for s in os.getenv("ALLOWED_ORIGINS", "").split(",") if s.strip() and s.strip() != "*"]
@@ -39,7 +41,9 @@ FEATURE_BATCH_BYTES = 1_500_000
 RESEARCH_RESPONSE_BYTES = 3_950_000
 RESEARCH_FEATURE_PATH = "/api/research/features"
 RESEARCH_TRAIN_PATH = "/api/research/train/"
-RATE_LIMITS = {"default": 30, "research_features": 100, "research_train": 12}
+REDIRECT_PATH = "/api/resolve-url"
+SCAN_PATH = "/api/scan"
+RATE_LIMITS = {"default": 30, "research_features": 100, "research_train": 12, "url_scan": 30}
 
 
 def path_scope(path):
@@ -47,6 +51,8 @@ def path_scope(path):
         return "research_features"
     if path.startswith(RESEARCH_TRAIN_PATH):
         return "research_train"
+    if path in (REDIRECT_PATH, SCAN_PATH):
+        return "url_scan"
     return "default"
 
 
@@ -133,6 +139,11 @@ class ScanRequest(URLRequest):
     check_redirect: bool = Field(default=False, strict=True)
 
 
+class ResolutionRequest(BaseModel):
+    # The body guard limits size. Semantic URL errors use the resolver's response shape.
+    url: str
+
+
 class EvaluationRequest(BaseModel):
     # Experiments are returned to the browser, never assumed to persist on Vercel.
     # Re-evaluation takes raw predictions, not client-supplied metric claims.
@@ -150,6 +161,22 @@ def extraction_or_error(value):
 
 def online_scan_enabled():
     return os.getenv("ONLINE_SCAN_ENABLED", "0") == "1"
+
+
+async def redirect_result(original_url, normalized_url, *, requested):
+    enabled = online_scan_enabled()
+    if enabled and requested:
+        return await run_in_threadpool(scan_url, original_url)
+
+    parsed = urlsplit(normalized_url)
+    status, reason = (
+        ("NOT_REQUESTED", "Redirect check was not requested.")
+        if enabled else ("DISABLED", "Online checking is disabled by environment configuration.")
+    )
+    return resolution_result(
+        original_url, status, original_domain=registered_domain(parsed.hostname),
+        is_short_url=bool(shortener_provider(parsed.hostname, parsed.path)), error_message=reason,
+    )
 
 
 @app.get("/api/health")
@@ -244,34 +271,35 @@ def predict(body: URLRequest):
     return {**result, **production.predict(result)}
 
 
-@app.post("/api/scan")
+@app.post(REDIRECT_PATH)
+async def resolve_redirect(body: ResolutionRequest):
+    try:
+        normalized_url = normalize_url(body.url)
+    except ValueError:
+        result = resolution_result(None, "INVALID_URL", error_message="Invalid HTTP or HTTPS URL.")
+        return JSONResponse(result, status_code=422)
+    return await redirect_result(body.url, normalized_url, requested=True)
+
+
+@app.post(SCAN_PATH)
 async def scan(body: ScanRequest):
     initial = extraction_or_error(body.url)
     is_short_link = bool(initial["shortener_provider"])
+    online = await redirect_result(body.url, initial["url"], requested=body.check_redirect)
     destination = None
-    if not online_scan_enabled():
-        online = {"status": "disabled", "reason": "Online checking is disabled by environment configuration.", "redirect_count": 0}
-    elif not body.check_redirect:
-        online = {"status": "not_requested", "reason": "Redirect check was not requested.", "redirect_count": 0}
-    elif not is_short_link:
-        online = {"status": "not_applicable", "reason": "Redirect checks require a recognized short link with a token.", "redirect_count": 0}
-    else:
-        online = await run_in_threadpool(scan_url, initial["url"])
-        if online["status"] == "complete":
-            if online["redirect_count"] > 0:
-                end = extraction_or_error(online["final_url"])
-                destination = {**end, **production.predict(end)}
-            else:
-                online = {**online, "status": "no_redirect", "reason": "No HTTP redirect was observed.", "final_url": None}
-    if is_short_link:
-        reason = (
-            "Short links are classified using the redirect destination."
-            if destination is not None else "Check the redirect destination before predicting a short link."
-        )
-        prediction = {"available": False, "prediction": None, "probability": None, "model_version": None, "reason": reason}
-    else:
+    prediction_target = None
+    reason = "Check the redirect destination before predicting a short link." if is_short_link else online.get("reason")
+    prediction = {"available": False, "prediction": None, "probability": None, "model_version": None, "reason": reason}
+    if online.get("destination_confirmed") is True:
+        end = extraction_or_error(online["final_url"])
+        destination = {**end, **production.predict(end)}
+        prediction_target = "destination"
+        prediction["reason"] = "The prediction is attached to the confirmed redirect destination."
+    elif not is_short_link and online.get("resolution_status") in ("NOT_REQUESTED", "DISABLED", "NO_REDIRECT"):
         prediction = production.predict(initial)
+        prediction_target = "initial"
     return {**initial, **prediction, "initial_url": body.url, "basic_features": BASIC_FEATURES,
+            "prediction_target": prediction_target,
             "destination": destination, "online": online, "id": str(uuid.uuid4()), "timestamp": datetime.now(timezone.utc).isoformat(),
             "disclaimer": "Machine learning prediction is an indicator, not a guarantee of website safety."}
 
